@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="5" fill="#191919"/>
+  <!-- compass needle — N warm, S dark -->
+  <polygon points="16,4 20.5,15.5 16,17.5 11.5,15.5" fill="#8f7250"/>
+  <polygon points="16,28 11.5,16.5 16,14.5 20.5,16.5" fill="#5a3e22"/>
+  <circle cx="16" cy="16" r="2.5" fill="#b09070"/>
+</svg>

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500" viewBox="0 0 500 500">
+  <!-- outer ring -->
+  <circle cx="250" cy="250" r="215" fill="none" stroke="#8f7250" stroke-width="2.5" opacity="0.3"/>
+  <!-- E/W tick marks -->
+  <line x1="34" y1="250" x2="62" y2="250" stroke="#8f7250" stroke-width="2.5" opacity="0.3"/>
+  <line x1="466" y1="250" x2="438" y2="250" stroke="#8f7250" stroke-width="2.5" opacity="0.3"/>
+  <!-- N needle -->
+  <polygon points="250,26 268,244 250,268 232,244" fill="#8f7250"/>
+  <!-- S needle -->
+  <polygon points="250,474 232,256 250,232 268,256" fill="#8f7250" opacity="0.28"/>
+  <!-- center pivot -->
+  <circle cx="250" cy="250" r="20" fill="#8f7250" opacity="0.18"/>
+  <circle cx="250" cy="250" r="9" fill="#8f7250" opacity="0.75"/>
+</svg>

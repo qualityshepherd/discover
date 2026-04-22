@@ -1,0 +1,7 @@
+**/.DS_Store
+
+# logo export files — not served to browsers
+images/logo-1024.png
+images/logo-512.png
+images/logo-dark-1024.png
+images/logo.jpg

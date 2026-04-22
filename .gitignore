@@ -1,0 +1,6 @@
+.claude/
+node_modules/
+.wrangler/
+.DS_Store
+test/errors/
+index.json

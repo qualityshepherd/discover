@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>discover admin</title>
+  <link rel="preload" href="/fonts/Oswald-Regular.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/admin.css">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.png" type="image/png">
+</head>
+<body>
+<div id="app">
+  <header class="admin-header">
+    <svg class="admin-logo-bg" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+      <circle cx="50" cy="50" r="42" fill="none" stroke="currentColor" stroke-width="2" opacity="0.3"/>
+      <polygon points="50,7 55.5,49 50,55 44.5,49" fill="currentColor"/>
+      <polygon points="50,93 44.5,51 50,45 55.5,51" fill="currentColor" opacity="0.28"/>
+      <circle cx="50" cy="50" r="5.5" fill="currentColor" opacity="0.5"/>
+    </svg>
+    <div class="nav-links">
+      <a href="/" id="nav-home" class="nav-icon hidden" title="view site" aria-label="view site" style="font-size:1rem">⌂</a>
+      <a href="#discover" id="nav-discover" class="hidden">discover<span id="nav-pending-badge" class="nav-badge hidden"></span></a>
+      <a href="#analytics" id="nav-analytics" class="hidden">analytics</a>
+      <a href="#settings" id="nav-settings" class="hidden nav-icon" title="settings" aria-label="settings">⚙</a>
+      <span id="nav-user" class="muted hidden"></span>
+    </div>
+  </header>
+
+  <!-- login -->
+  <div id="view-login">
+    <h2>sign in</h2>
+
+    <div id="login-unconfigured" class="hidden">
+      <p class="muted field">no owner configured. enter a passphrase to derive your pubkey, then add it to <code>wrangler.toml</code> as <code>OWNER</code> and redeploy.</p>
+      <div class="field">
+        <label for="setup-passphrase">passphrase</label>
+        <div class="input-wrap">
+          <input type="password" id="setup-passphrase" placeholder="enter your passphrase" autocomplete="new-password">
+          <button type="button" class="eye-btn" aria-label="Show/hide passphrase" data-target="setup-passphrase"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12.5c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg></button>
+        </div>
+        <div class="passphrase-strength hidden" id="strength-display"></div>
+      </div>
+      <button class="btn btn-primary" id="btn-derive">derive pubkey</button>
+      <div id="pubkey-result" class="hidden field mt-4">
+        <label for="pubkey-display">your pubkey — copy this into wrangler.toml</label>
+        <input type="text" id="pubkey-display" readonly onclick="this.select()">
+      </div>
+    </div>
+
+    <div id="login-existing" class="hidden">
+      <div class="field">
+        <label for="login-passphrase">passphrase</label>
+        <div class="input-wrap">
+          <input type="password" id="login-passphrase" placeholder="your passphrase" autocomplete="current-password">
+          <button type="button" class="eye-btn" aria-label="Show/hide passphrase" data-target="login-passphrase"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12.5c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg></button>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="btn-login">sign in</button>
+    </div>
+
+    <div class="error hidden" id="login-error"></div>
+  </div>
+
+  <!-- analytics -->
+  <div id="view-analytics" class="hidden">
+    <div class="view-header">
+      <h2 class="view-title">analytics</h2>
+      <nav class="a-nav">
+        <a data-days="1">today</a>
+        <a data-days="2">2d</a>
+        <a data-days="7">week</a>
+        <a data-days="30">30d</a>
+        <a data-days="365">year</a>
+      </nav>
+    </div>
+    <div id="analytics-body"></div>
+  </div>
+
+  <!-- settings -->
+  <div id="view-settings" class="hidden">
+    <h2 class="view-title field">settings</h2>
+    <div class="mt-8">
+      <button class="btn btn-danger" id="btn-logout">logout</button>
+    </div>
+  </div>
+
+  <!-- discover -->
+  <div id="view-discover" class="hidden">
+    <div class="view-header">
+      <h2 class="view-title"><a href="/discover" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">discover</a></h2>
+      <button id="btn-dc-check" class="btn btn-sm">refresh feeds</button>
+    </div>
+    <p id="dc-check-status" style="font-size:var(--text-xs);color:var(--color-text-muted);margin-top:var(--space-1)"></p>
+
+    <!-- add playlist form -->
+    <div class="field">
+      <div class="row field">
+        <div class="field" style="flex:2">
+          <label for="dc-title">title</label>
+          <input type="text" id="dc-title" placeholder="Playlist name">
+        </div>
+        <div class="field" style="flex:2">
+          <label for="dc-tags">tags</label>
+          <input type="text" id="dc-tags" placeholder="design, essays, tech">
+        </div>
+        <div class="field" style="flex:1">
+          <label for="dc-author-name">author</label>
+          <input type="text" id="dc-author-name" placeholder="name">
+        </div>
+        <div class="field" style="flex:1">
+          <label for="dc-author-url">author url</label>
+          <input type="url" id="dc-author-url" placeholder="https://...">
+        </div>
+      </div>
+      <div class="field">
+        <label for="dc-description">description</label>
+        <input type="text" id="dc-description" placeholder="Short description">
+      </div>
+      <div class="flex gap-3 items-center">
+        <button class="btn btn-primary" id="btn-dc-add">add playlist</button>
+        <label class="flex items-center gap-2" style="font-size:var(--text-sm);cursor:pointer">
+          <input type="checkbox" id="dc-featured"> featured
+        </label>
+        <span class="error hidden" id="dc-error"></span>
+      </div>
+    </div>
+
+    <!-- playlists -->
+    <div class="field mt-6">
+      <h3 class="view-subtitle">playlists <span id="dc-entries-count" class="muted"></span></h3>
+      <div id="dc-entries-list"></div>
+    </div>
+
+    <!-- sources -->
+    <div class="field mt-4">
+      <h3 class="view-subtitle">sources <span id="dc-sources-count" class="muted"></span></h3>
+      <div class="flex gap-3 items-center field">
+        <input type="url" id="dc-source-url" placeholder="https://example.com/feed.xml" style="flex:1">
+        <select id="dc-source-playlist" style="width:140px"><option value="">+ playlist</option></select>
+        <button class="btn btn-sm" id="btn-dc-add-source">add source</button>
+      </div>
+      <div class="flex gap-3 items-center field">
+        <input type="text" id="dc-sources-search" placeholder="filter sources…" style="flex:1">
+        <select id="dc-sources-filter-playlist" style="width:160px"><option value="">all playlists</option></select>
+        <select id="dc-sources-filter-status" style="width:130px">
+          <option value="">all statuses</option>
+          <option value="ok">ok</option>
+          <option value="warn">warning</option>
+          <option value="error">error</option>
+          <option value="null">never fetched</option>
+        </select>
+      </div>
+      <div id="dc-sources-list"></div>
+    </div>
+
+    <!-- pending submissions -->
+    <div class="field mt-6">
+      <h3 class="view-subtitle">pending <span id="dc-pending-count" class="muted"></span></h3>
+      <div id="dc-pending-list"></div>
+    </div>
+
+    <!-- batch import -->
+    <div class="field mt-6">
+      <h3 class="view-subtitle">batch import</h3>
+      <textarea id="dc-batch-urls" rows="6" placeholder="paste feed URLs, one per line" style="width:100%;font-size:var(--text-sm);font-family:monospace"></textarea>
+      <div class="flex gap-3 items-center mt-2">
+        <button class="btn btn-sm" id="btn-dc-batch-validate">validate</button>
+        <select id="dc-batch-playlist" style="width:180px"><option value="">no playlist</option></select>
+      </div>
+      <div id="dc-batch-results"></div>
+    </div>
+
+    <!-- blocklist -->
+    <div class="field mt-6">
+      <h3 class="view-subtitle">blocked domains</h3>
+      <textarea id="dc-block-textarea" rows="4" placeholder="one domain or url per line" style="width:100%;font-size:var(--text-sm);font-family:monospace"></textarea>
+      <button class="btn btn-sm mt-2" id="btn-dc-block-save">save</button>
+    </div>
+  </div>
+
+</div>
+
+<script type="module" src="/admin/admin.js"></script>
+</body>
+</html>

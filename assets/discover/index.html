@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>discover</title>
+  <meta name="description" content="A curated list of RSS feeds worth following. Feeds from people writing, making and thinking.">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="discover">
+  <meta property="og:title" content="discover">
+  <meta property="og:description" content="A curated list of RSS feeds worth following. Feeds from people writing, making and thinking.">
+  <meta property="og:url" content="https://discover.brine.dev/">
+  <meta property="og:image" content="https://discover.brine.dev/images/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="discover">
+  <meta name="twitter:description" content="A curated list of RSS feeds worth following.">
+  <meta name="twitter:image" content="https://discover.brine.dev/images/og.png">
+  <link rel="canonical" href="https://discover.brine.dev/">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"discover","url":"https://discover.brine.dev/","description":"A curated list of RSS feeds worth following.","potentialAction":{"@type":"SearchAction","target":{"@type":"EntryPoint","urlTemplate":"https://discover.brine.dev/?q={search_term_string}"},"query-input":"required name=search_term_string"}}</script>
+  <link rel="preload" href="/fonts/Oswald-Regular.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="preload" href="/fonts/Inter-Regular.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/discover.css">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.png" type="image/png">
+  <script>document.documentElement.dataset.theme = localStorage.getItem('discover_theme') || 'dark'; if (localStorage.getItem('discover_token')) document.addEventListener('DOMContentLoaded', () => { const a = document.getElementById('nav-admin'); if (a) a.classList.remove('hidden') })</script>
+</head>
+<body>
+<div id="app">
+  <header>
+    <a href="/">
+      <svg class="site-logo" aria-label="discover" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 465 100">
+        <circle cx="50" cy="50" r="41" fill="none" stroke="currentColor" stroke-width="2" opacity="0.18"/>
+        <polygon points="50,7 55.5,49 50,55 44.5,49" fill="currentColor"/>
+        <polygon points="50,93 44.5,51 50,45 55.5,51" fill="currentColor" opacity="0.25"/>
+        <circle cx="50" cy="50" r="5.5" fill="currentColor" opacity="0.5"/>
+        <text x="112" y="88" font-family="header, Oswald, sans-serif" font-weight="600" font-size="96" fill="currentColor">discover</text>
+      </svg>
+    </a>
+    <nav>
+      <a href="/feed">my feed</a>
+      <a href="/about">about</a>
+      <a id="nav-admin" href="/admin" class="nav-icon hidden" title="admin" aria-label="admin"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.57 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg></a>
+      <button id="btn-theme" title="Toggle light/dark mode" aria-label="Toggle theme"></button>
+    </nav>
+  </header>
+
+  <main class="container">
+
+    <h1 class="sr-only">discover</h1>
+
+    <!-- browse view -->
+    <div id="view-browse">
+      <div class="discover-header">
+        <label for="discover-search" class="sr-only">Search feeds</label>
+        <input type="text" id="discover-search" placeholder="search feeds…" autocomplete="off">
+        <button id="btn-random" class="btn btn-sm" title="Shuffle playlist order" aria-label="Shuffle playlist order">random</button>
+        <button id="btn-new" class="btn btn-sm" title="Recently added sources" aria-label="Recently added sources">new</button>
+      </div>
+      <div id="tag-cloud"></div>
+      <div id="discover-cards"></div>
+    </div>
+
+    <!-- playlist/feed view -->
+    <div id="view-playlist" class="hidden">
+      <div class="discover-playlist-header">
+        <div class="discover-playlist-meta">
+          <h2 id="playlist-title"></h2>
+          <p id="playlist-description" class="muted"></p>
+          <div id="playlist-tags" class="discover-tags"></div>
+        </div>
+        <button id="btn-follow-playlist" class="btn btn-sm btn-follow">+ follow</button>
+        <button id="btn-rss-playlist" class="btn btn-sm" title="Copy RSS feed URL" aria-label="Copy RSS feed URL">rss</button>
+      </div>
+      <div id="playlist-feed"></div>
+    </div>
+
+  </main>
+</div>
+
+<!-- feed item modal (injected by JS) -->
+
+<script type="module" src="/discover/discover.js"></script>
+</body>
+</html>

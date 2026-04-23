@@ -1,6 +1,6 @@
 import { feedsItemTemplate } from '../src/templates.js'
 import { openModal, initModal, resetModal, setFeedContext, getFeedItem } from '../discover/modal.js'
-import { getFollows, removeFollow, getSourceFollows, hasSourceFollow, toggleSourceFollow, removeSourceFollow, getCustomFeeds, addCustomFeed, removeCustomFeed, hasCustomFeed, clearFollows, clearSourceFollows, clearCustomFeeds } from '../discover/follows.js'
+import { getFollows, removeFollow, getSourceFollows, hasSourceFollow, toggleSourceFollow, removeSourceFollow, getCustomFeeds, addCustomFeed, removeCustomFeed, hasCustomFeed, clearFollows, clearSourceFollows, clearCustomFeeds, clearFollowedPlaylists } from '../discover/follows.js'
 
 let allPosts = []
 let allPlaylists = []
@@ -138,19 +138,23 @@ document.getElementById('feed-posts').addEventListener('click', e => {
   if (item) openModal(item)
 })
 
-document.getElementById('btn-opml').addEventListener('click', () => {
+document.getElementById('btn-opml').addEventListener('click', async () => {
   const follows = getFollows()
   const sourceFollows = getSourceFollows()
   const customFeeds = getCustomFeeds()
   const allSources = [...sourceFollows, ...customFeeds.map(f => f.url)]
   if (!follows.length && !allSources.length) return
-  const params = new URLSearchParams()
-  if (follows.length) params.set('ids', follows.join(','))
-  if (allSources.length) params.set('sources', allSources.join(','))
+  const res = await fetch('/api/discover/feed/opml', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids: follows, sources: allSources })
+  })
+  const blob = await res.blob()
   const a = document.createElement('a')
-  a.href = `/api/discover/feed/opml?${params}`
+  a.href = URL.createObjectURL(blob)
   a.download = 'my-feed.opml'
   a.click()
+  URL.revokeObjectURL(a.href)
 })
 
 document.getElementById('btn-clear-feed').addEventListener('click', () => {
@@ -158,6 +162,7 @@ document.getElementById('btn-clear-feed').addEventListener('click', () => {
   clearFollows()
   clearSourceFollows()
   clearCustomFeeds()
+  clearFollowedPlaylists()
   activePlaylist = null
   load()
 })

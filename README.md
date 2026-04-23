@@ -2,7 +2,7 @@
 
 **Curated RSS discovery. No algorithm. No ads.**
 
-Discover is a curated RSS discovery app — hand-picked playlists of RSS/Atom feeds, organized by vibe. Browse, follow, and export your reading list. Runs on Cloudflare Workers' free tier.
+Discover is a curated RSS discovery app hand-picked playlists of RSS/Atom feeds, organized by vibe. Browse, follow, and export your reading list. Runs on Cloudflare Workers' free tier.
 
 ## Requirements
 - Node.js

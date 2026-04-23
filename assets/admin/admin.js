@@ -58,8 +58,13 @@ const login = async (passphrase) => {
   const { privateKey, pubkey } = await deriveKeypair(passphrase, location.hostname)
   const { challenge } = await api('GET', '/api/challenge')
   const sig = await signChallenge(challenge, privateKey)
-  const res = await api('POST', '/api/login', { pubkey, challenge, sig })
-  if (res.error) throw new Error(res.error)
+  // raw fetch — api() treats any 401 as "session expired" but here it just means wrong passphrase
+  const res = await fetch('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pubkey, challenge, sig })
+  }).then(r => r.json())
+  if (res.error) throw new Error('invalid passphrase')
   setToken(res.token)
   localStorage.setItem('discover_pubkey', pubkey)
 }

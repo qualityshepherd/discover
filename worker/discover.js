@@ -169,12 +169,11 @@ const handleFeed = async (kv, url) => {
   return cors(json({ posts, playlists }))
 }
 
-// GET /api/discover/feed/opml?ids=... — OPML of followed playlists' sources
-const handleFeedOpml = async (kv, url) => {
-  const ids = (url.searchParams.get('ids') || '').split(',').filter(Boolean).slice(0, 100)
-  const sourceUrls = (url.searchParams.get('sources') || '').split(',').filter(Boolean).slice(0, 100)
+// POST /api/discover/feed/opml — OPML of followed playlists' sources
+const handleFeedOpml = async (kv, req) => {
+  const { ids = [], sources = [] } = await req.json().catch(() => ({}))
   const feeds = ids.length ? (await Promise.all(ids.map(id => getFeed(kv, id)))).filter(Boolean) : []
-  if (sourceUrls.length) feeds.push({ title: 'followed sources', sources: sourceUrls })
+  if (sources.length) feeds.push({ title: 'followed sources', sources })
   return new Response(toOpml(feeds), {
     headers: {
       'Content-Type': 'text/x-opml',
@@ -402,28 +401,20 @@ const handleApprove = async (req, kv) => {
   if (idx === -1) return json({ error: 'not found' }, 404)
   const item = pending.splice(idx, 1)[0]
 
-  const sources = body.type === 'playlist' ? (body.sources || [item.url]) : [item.url]
-  const entry = {
-    id: makeId(item.url),
-    type: body.type || 'feed',
-    title: body.title || item.title,
-    description: body.description || item.description,
-    tags: body.tags || item.tags,
-    sources,
-    author: { name: body.author?.name?.trim() || item.author?.name || '', url: body.author?.url?.trim() || item.author?.url || '', pubkey: '' },
-    imports: 0,
-    featured: false,
-    active: true,
-    updateFrequency: 'unknown',
-    lastChecked: null,
-    addedAt: new Date().toISOString()
+  if (body.playlistId) {
+    const feed = await getFeed(kv, body.playlistId)
+    if (!feed) return json({ error: 'playlist not found' }, 404)
+    const sources = [...new Set([...(feed.sources || []), item.url])]
+    await Promise.all([
+      saveFeed(kv, { ...feed, sources }),
+      kv.put(KV_PENDING, JSON.stringify(pending))
+    ])
+    return json({ ok: true })
   }
-  await Promise.all([
-    saveFeed(kv, entry),
-    addToIndex(kv, entry.id),
-    kv.put(KV_PENDING, JSON.stringify(pending))
-  ])
-  return json({ ok: true, entry })
+
+  // no playlist — just dismiss from pending
+  await kv.put(KV_PENDING, JSON.stringify(pending))
+  return json({ ok: true })
 }
 
 // POST /api/discover/admin/add — add directly without going through pending
@@ -679,6 +670,17 @@ const handleBlockedRemove = async (req, kv) => {
   return json({ ok: true })
 }
 
+// GET /api/discover/all/opml — full OPML of every approved playlist's sources
+const handleAllOpml = async (kv) => {
+  const feeds = await getFeeds(kv) || []
+  return new Response(toOpml(feeds), {
+    headers: {
+      'Content-Type': 'text/x-opml',
+      'Content-Disposition': 'attachment; filename="discover-all.opml"'
+    }
+  })
+}
+
 // router
 
 export const handleDiscover = async (req, env) => {
@@ -690,7 +692,8 @@ export const handleDiscover = async (req, env) => {
   // Public routes — no auth
   if (method === 'GET' && path === '/api/discover') return handleList(kv, url)
   if (method === 'GET' && path === '/api/discover/feed') return handleFeed(kv, url)
-  if (method === 'GET' && path === '/api/discover/feed/opml') return handleFeedOpml(kv, url)
+  if (method === 'POST' && path === '/api/discover/feed/opml') return handleFeedOpml(kv, req)
+  if (method === 'GET' && path === '/api/discover/all/opml') return handleAllOpml(kv)
   if (method === 'GET' && path === '/api/discover/random') return handleRandom(kv, url)
   if (method === 'GET' && path === '/api/discover/new') return handleNew(kv)
   if (method === 'POST' && path === '/api/discover/preview') return handlePreview(req, kv)

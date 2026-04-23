@@ -20,9 +20,7 @@ export const removeFollow = (id) => saveFollows(getFollows().filter(f => f !== i
 export const toggleFollow = (id) => { hasFollow(id) ? removeFollow(id) : addFollow(id) }
 
 export const followBtnHtml = (id, sources = []) => {
-  const followed = sources.length
-    ? getSourceFollows().some(url => sources.includes(url))
-    : hasFollow(id)
+  const followed = sources.length ? hasFollowedPlaylist(id) : hasFollow(id)
   const sourcesAttr = sources.length ? ` data-sources="${sources.join('|')}"` : ''
   return `<button class="btn btn-sm btn-follow${followed ? ' following' : ''}" data-follow-id="${id}"${sourcesAttr}>${followed ? 'in my feed' : '+ my feed'}</button>`
 }
@@ -39,17 +37,24 @@ export const handleRssCopy = async (btn, id) => {
 
 export const syncFollowButtons = () => {
   document.querySelectorAll('.btn-follow[data-follow-id]').forEach(btn => {
-    let followed
-    if (btn.dataset.sources) {
-      const sources = btn.dataset.sources.split('|')
-      followed = getSourceFollows().some(url => sources.includes(url))
-    } else {
-      followed = hasFollow(btn.dataset.followId)
-    }
+    const followed = btn.dataset.sources
+      ? hasFollowedPlaylist(btn.dataset.followId)
+      : hasFollow(btn.dataset.followId)
     btn.classList.toggle('following', followed)
     btn.textContent = followed ? 'in my feed' : '+ my feed'
   })
 }
+
+// explicit playlist follows — tracks which playlist IDs were intentionally followed
+// separate from source follows so button state isn't inferred from source overlap
+
+const PLAYLIST_FOLLOWED_KEY = 'discover_followed_playlists'
+const getFollowedPlaylistIds = () => { try { return new Set(JSON.parse(localStorage.getItem(PLAYLIST_FOLLOWED_KEY) || '[]')) } catch { return new Set() } }
+const saveFollowedPlaylistIds = (s) => localStorage.setItem(PLAYLIST_FOLLOWED_KEY, JSON.stringify([...s]))
+export const hasFollowedPlaylist = (id) => getFollowedPlaylistIds().has(id)
+export const addFollowedPlaylist = (id) => { const s = getFollowedPlaylistIds(); s.add(id); saveFollowedPlaylistIds(s) }
+export const removeFollowedPlaylist = (id) => { const s = getFollowedPlaylistIds(); s.delete(id); saveFollowedPlaylistIds(s) }
+export const clearFollowedPlaylists = () => localStorage.removeItem(PLAYLIST_FOLLOWED_KEY)
 
 // source-level follows (individual RSS feed URLs)
 

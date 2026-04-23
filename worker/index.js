@@ -88,7 +88,7 @@ export default {
       if (!id) return withSec(baseRes)
       const feed = await env.DISCOVER_KV.get(`feed:${id}`, 'json').catch(() => null)
       if (!feed) return withSec(baseRes)
-      const title = `${feed.title} · discover`
+      const title = `${feed.title} · discover rss feeds worth reading`
       const desc = feed.description || 'A curated RSS playlist on discover.'
       const img = feed.coverImage?.startsWith('http') ? feed.coverImage : 'https://discover.brine.dev/images/og.png'
       const canonical = `https://discover.brine.dev/discover/${id}`

@@ -231,7 +231,7 @@ async function renderDcSources () {
     el.querySelectorAll('.dc-source-row').forEach(row => {
       const url = row.querySelector('.dc-source-edit')?.dataset.url || ''
       const matchQ = !q || url.toLowerCase().includes(q)
-      const matchP = !pid || (urlToMixes[url] || []).some(m => m.id === pid)
+      const matchP = !pid || (pid === '__none__' ? !(urlToMixes[url] || []).length : (urlToMixes[url] || []).some(m => m.id === pid))
       const dot = row.querySelector('.status-dot')
       const cls = dot?.className || ''
       const matchS = !status ||
@@ -337,12 +337,18 @@ export async function renderDcPending () {
   }
   if (!el) return
   if (!list.length) { el.innerHTML = '<p class="muted" style="font-size:var(--text-sm)">no pending submissions.</p>'; return }
+  const playlistOptions = [...dcEntries].sort((a, b) => a.title.localeCompare(b.title))
+    .map(e => `<option value="${escHtml(e.id)}">${escHtml(e.title)}</option>`).join('')
+
   el.innerHTML = list.map(p => `
     <div class="dc-pending-row" data-pending-url="${escHtml(p.url)}">
       <div class="dc-pending-url">${escHtml(p.url)}</div>
       <div class="dc-pending-meta">submitted ${timeAgo(p.submittedAt)}</div>
       <div class="dc-pending-actions">
-        <input type="text" class="dc-pending-title-input" value="${escHtml(p.title || '')}" placeholder="title">
+        <select class="dc-pending-playlist">
+          <option value="">no playlist</option>
+          ${playlistOptions}
+        </select>
         <button class="btn btn-sm btn-primary dc-pending-approve">approve</button>
         <button class="btn btn-sm dc-pending-reject">reject</button>
         <a href="${escHtml(p.url)}" target="_blank" rel="noopener" class="icon-btn" aria-label="Open feed">${ICON_EXTERNAL}</a>
@@ -353,9 +359,9 @@ export async function renderDcPending () {
     const row = btn.closest('[data-pending-url]')
     btn.addEventListener('click', async () => {
       const url = row.dataset.pendingUrl
-      const title = row.querySelector('.dc-pending-title-input').value.trim()
+      const playlistId = row.querySelector('.dc-pending-playlist').value
       btn.disabled = true
-      const res = await api('POST', '/api/discover/admin/approve', { url, title })
+      const res = await api('POST', '/api/discover/admin/approve', { url, playlistId: playlistId || null })
       if (res.error) { alert(res.error); btn.disabled = false; return }
       await Promise.all([renderDcEntries(), renderDcPending()])
     })

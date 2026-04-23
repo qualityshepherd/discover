@@ -1,7 +1,7 @@
 import { feedsItemTemplate } from '../src/templates.js'
 import { openModal, initModal, resetModal, setFeedContext, getFeedItem } from './modal.js'
 import { renderTag, renderCard } from './render.js'
-import { toggleFollow, hasFollow, followBtnHtml, rssCopyBtnHtml, handleRssCopy, syncFollowButtons, initFollowHover, hasSourceFollow, getSourceFollows, toggleSourceFollow, removeSourceFollow, syncSourceFollowButtons, injectSourceFollowButtons } from './follows.js'
+import { toggleFollow, hasFollow, followBtnHtml, rssCopyBtnHtml, handleRssCopy, syncFollowButtons, initFollowHover, hasSourceFollow, toggleSourceFollow, removeSourceFollow, syncSourceFollowButtons, injectSourceFollowButtons, hasFollowedPlaylist, addFollowedPlaylist, removeFollowedPlaylist } from './follows.js'
 
 // browse view
 
@@ -21,6 +21,15 @@ const renderTagCloud = (tags) => {
   tagCloud.innerHTML = visible.map(({ tag }) => renderTag(tag, activeTags.has(tag))).join('') + moreBtn
 }
 
+const shuffle = (arr) => {
+  const a = [...arr]
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]]
+  }
+  return a
+}
+
 const renderBrowse = (entries, tags) => {
   renderTagCloud(tags)
 
@@ -29,8 +38,10 @@ const renderBrowse = (entries, tags) => {
     cards.innerHTML = '<p class="muted">no feeds found.</p>'
     return
   }
+  const featured = entries.filter(e => e.featured)
+  const rest = shuffle(entries.filter(e => !e.featured))
   const newCard = (newCardPosts === null || newCardPosts.length) ? renderNewCard() : ''
-  cards.innerHTML = newCard + entries.map(renderCard).join('')
+  cards.innerHTML = newCard + [...featured, ...rest].map(renderCard).join('')
 }
 
 const filterAndRender = () => {
@@ -191,7 +202,7 @@ const loadPlaylist = async (id) => {
     rssBtn.href = `/api/discover/${id}/rss`
     const followBtn = document.getElementById('btn-follow-playlist')
     const sources = entry.sources || []
-    const followed = sources.length ? getSourceFollows().some(url => sources.includes(url)) : hasFollow(id)
+    const followed = sources.length ? hasFollowedPlaylist(id) : hasFollow(id)
     followBtn.className = `btn btn-sm btn-follow${followed ? ' following' : ''}`
     followBtn.dataset.followId = id
     if (sources.length) followBtn.dataset.sources = sources.join('|')
@@ -297,13 +308,15 @@ document.getElementById('discover-cards').addEventListener('click', e => {
   }
 
   const followBtn = e.target.closest('.btn-follow')
-  if (followBtn) {
+  if (followBtn && followBtn.id !== 'btn-follow-playlist') {
     if (followBtn.dataset.sources) {
+      const id = followBtn.dataset.followId
       const sources = followBtn.dataset.sources.split('|').filter(Boolean)
-      const alreadyFollowed = getSourceFollows().some(url => sources.includes(url))
-      if (alreadyFollowed) {
+      if (hasFollowedPlaylist(id)) {
+        removeFollowedPlaylist(id)
         sources.forEach(url => removeSourceFollow(url))
       } else {
+        addFollowedPlaylist(id)
         sources.forEach(url => { if (!hasSourceFollow(url)) toggleSourceFollow(url) })
       }
     } else {
@@ -348,18 +361,20 @@ document.getElementById('discover-cards').addEventListener('click', e => {
 document.getElementById('btn-follow-playlist').addEventListener('click', (e) => {
   if (!playlistEntry) return
   const btn = e.currentTarget
+  const id = playlistEntry.id
   if (btn.dataset.sources) {
     const sources = btn.dataset.sources.split('|').filter(Boolean)
-    const alreadyFollowed = getSourceFollows().some(url => sources.includes(url))
-    if (alreadyFollowed) {
+    if (hasFollowedPlaylist(id)) {
+      removeFollowedPlaylist(id)
       sources.forEach(url => removeSourceFollow(url))
     } else {
+      addFollowedPlaylist(id)
       sources.forEach(url => { if (!hasSourceFollow(url)) toggleSourceFollow(url) })
     }
     syncFollowButtons()
     syncSourceFollowButtons()
   } else {
-    toggleFollow(playlistEntry.id)
+    toggleFollow(id)
     syncFollowButtons()
   }
 })

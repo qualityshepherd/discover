@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>about · discover</title>
+  <title>about · discover rss feeds worth reading</title>
   <meta name="description" content="discover is a curated list of RSS feeds worth following. No accounts, no tracking.">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="discover">
@@ -47,6 +47,13 @@
       <p><b>discover</b> is a curated list of RSS feeds worth following. Feeds from people writing, making and thinking.</p>
       <p>Browse the playlists, follow what fits, export to your reader of choice. No accounts. No tracking.</p>
       <p class="muted"><a href="https://brine.dev" target="_blank" rel="noopener">brine</a> · <a href="mailto:ack@brine.dev">ack@brine.dev</a></p>
+
+      <div class="feed-add-wrap" id="suggest-wrap">
+        <label for="suggest-url" class="sr-only">RSS feed URL</label>
+        <input type="url" id="suggest-url" placeholder="https://example.com/feed.xml" autocomplete="off" spellcheck="false">
+        <button id="btn-suggest" class="btn btn-sm">suggest a feed</button>
+      </div>
+      <div id="suggest-status" class="feed-add-status"></div>
     </div>
 
   </main>
@@ -61,6 +68,41 @@ themeBtn.addEventListener('click', () => {
   update()
 })
 update()
+
+const suggestUrl = document.getElementById('suggest-url')
+const suggestBtn = document.getElementById('btn-suggest')
+const suggestStatus = document.getElementById('suggest-status')
+const suggest = async () => {
+  const url = suggestUrl.value.trim()
+  if (!url) return
+  suggestBtn.disabled = true
+  suggestBtn.textContent = '…'
+  try {
+    const res = await fetch('/api/discover/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      suggestStatus.textContent = data.error || 'something went wrong'
+      suggestStatus.className = 'feed-add-status error'
+    } else {
+      suggestUrl.value = ''
+      suggestStatus.textContent = 'thanks! we\'ll take a look.'
+      suggestStatus.className = 'feed-add-status ok'
+      setTimeout(() => { suggestStatus.textContent = ''; suggestStatus.className = 'feed-add-status' }, 4000)
+    }
+  } catch {
+    suggestStatus.textContent = 'something went wrong'
+    suggestStatus.className = 'feed-add-status error'
+  } finally {
+    suggestBtn.disabled = false
+    suggestBtn.textContent = 'suggest'
+  }
+}
+suggestBtn.addEventListener('click', suggest)
+suggestUrl.addEventListener('keydown', e => { if (e.key === 'Enter') suggest() })
 </script>
 </body>
 </html>

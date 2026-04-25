@@ -1,3 +1,12 @@
+export const safeUrl = (url) => {
+  if (!url) return ''
+  try {
+    const u = new URL(url)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return ''
+    return url.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+  } catch { return '' }
+}
+
 export const extractTag = (xml, tag) => {
   const match = xml.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'))
   return match ? match[1].trim() : ''
@@ -48,9 +57,9 @@ const parseRssItem = (itemXml, feedMeta, isPodcast = false) => {
     : (enclosureUrl && isImageEnclosure && !content.includes(enclosureUrl))
         ? enclosureUrl
         : ''
-  const imgTag = imgUrl ? `<img src="${imgUrl}" loading="lazy" style="max-width:100%;display:block;margin-top:0.5em;">` : ''
+  const imgTag = imgUrl ? `<img src="${safeUrl(imgUrl)}" loading="lazy" style="max-width:100%;display:block;margin-top:0.5em;">` : ''
   const audioTag = enclosureUrl && isPodcast && isAudioEnclosure && !content.includes('<audio')
-    ? `<audio controls src="${enclosureUrl}" style="width:100%;margin-top:1em;"></audio>`
+    ? `<audio controls src="${safeUrl(enclosureUrl)}" style="width:100%;margin-top:1em;"></audio>`
     : ''
   const rawTitle = extractCdata(extractTag(itemXml, 'title'))
   const title = rawTitle || feedMeta.title || ''
@@ -77,7 +86,7 @@ const splitEntries = (xml) => {
 const parseAtomEntry = (entryXml, feedMeta) => {
   const videoId = extractCdata(extractTag(entryXml, 'yt:videoId'))
   const thumbnail = videoId
-    ? `<a href="https://www.youtube.com/watch?v=${videoId}" target="_blank" rel="noopener noreferrer"><img src="https://i.ytimg.com/vi/${videoId}/hqdefault.jpg" loading="lazy" style="max-width:100%;display:block;margin:0 auto;"></a>`
+    ? `<a href="${safeUrl(`https://www.youtube.com/watch?v=${videoId}`)}" target="_blank" rel="noopener noreferrer"><img src="${safeUrl(`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`)}" loading="lazy" style="max-width:100%;display:block;margin:0 auto;"></a>`
     : ''
   const content = extractCdata(extractTag(entryXml, 'content') || extractTag(entryXml, 'summary'))
   return {

@@ -33,6 +33,9 @@ export const feedsItemTemplate = (item) => {
   const text = blurb(item.content || '')
 
   const sourceName = `${item.author ? `${item.author} · ` : ''}${item.feed?.title || domain}`
+  const playlistBadge = item.fromPlaylist && item.fromPlaylistId
+    ? `<a class="feed-playlist-badge" href="/discover/${item.fromPlaylistId}">in: ${item.fromPlaylist}</a>`
+    : ''
 
   return `
   <div class="post feed-post" data-url="${url}" data-feed-url="${safeUrl(item.feed?.url || '')}">
@@ -50,6 +53,7 @@ export const feedsItemTemplate = (item) => {
         ${text ? `<p class="feed-blurb">${text}</p>` : ''}
       </div>
     </div>
+    ${playlistBadge}
   </div>
   `
 }

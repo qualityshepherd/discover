@@ -30,6 +30,7 @@ test('Analytics: isBot detects URL-encoded %24%7B template literal', t => { t.ok
 test('Analytics: isBot detects URL-encoded %7B brace', t => { t.ok(isBot('/src/%7Bavatar%7D')) })
 
 // classifyHit — /src should be skipped entirely, not counted as bot
+test('classifyHit: skips /manifest.json', t => { t.is(classifyHit('/manifest.json'), 'skip') })
 test('classifyHit: skips /src paths', t => { t.is(classifyHit('/src/app.js'), 'skip') })
 test('classifyHit: skips /src with subpath', t => { t.is(classifyHit('/src/%24%7Burl%7D'), 'skip') })
 test('classifyHit: normal post is a hit', t => { t.is(classifyHit('/posts/my-post'), 'hit') })

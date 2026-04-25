@@ -2,6 +2,7 @@ import { feedsItemTemplate } from '../src/templates.js'
 import { openModal, initModal, resetModal, setFeedContext, getFeedItem } from './modal.js'
 import { renderTag, renderCard } from './render.js'
 import { toggleFollow, hasFollow, followBtnHtml, rssCopyBtnHtml, handleRssCopy, syncFollowButtons, initFollowHover, hasSourceFollow, toggleSourceFollow, removeSourceFollow, syncSourceFollowButtons, injectSourceFollowButtons, hasFollowedPlaylist, addFollowedPlaylist, removeFollowedPlaylist } from './follows.js'
+import { injectMentionsLinks } from './mentions.js'
 
 // browse view
 
@@ -9,6 +10,7 @@ let allEntries = []
 let allTags = []
 let activeTags = new Set()
 let playlistEntry = null
+let mentionCounts = {}
 
 let tagCloudExpanded = false
 
@@ -99,6 +101,7 @@ const loadBrowse = async () => {
   const data = await res.json()
   allEntries = data.feeds || []
   allTags = data.tags || []
+  mentionCounts = data.mentionCounts || {}
   newCardPosts = data.hasNew ? null : [] // null = not yet loaded; [] = known empty
 
   renderBrowse(allEntries, data.tags || [])
@@ -143,6 +146,7 @@ const openDrawer = async (id) => {
     <div class="discover-drawer-actions">
       ${isNew ? '' : followBtnHtml(id, entrySources)}
       ${isNew ? '' : rssCopyBtnHtml(id)}
+      ${isNew ? '' : `<button class="btn btn-sm btn-link-copy" data-link-id="${id}" title="Copy playlist link">link</button>`}
       <button class="discover-drawer-close btn btn-sm" aria-label="Close">✕</button>
     </div>
     <div class="discover-drawer-feed"><p class="muted">loading…</p></div>
@@ -169,6 +173,7 @@ const openDrawer = async (id) => {
   setFeedContext(posts)
   feedEl.innerHTML = posts.map(feedsItemTemplate).join('')
   injectSourceFollowButtons(feedEl)
+  injectMentionsLinks(feedEl, mentionCounts)
   initModal()
 
   feedEl.addEventListener('click', onFeedClick)
@@ -249,7 +254,7 @@ document.getElementById('btn-random').addEventListener('click', async () => {
     feed: { ...p.feed, title: p.feed?.title ? `${p.feed.title} · ${p.fromPlaylist}` : p.fromPlaylist }
   }))
   cards.innerHTML = withPlaylist.length ? withPlaylist.map(feedsItemTemplate).join('') : '<p class="muted">no posts found.</p>'
-  if (withPlaylist.length) injectSourceFollowButtons(cards)
+  if (withPlaylist.length) { injectSourceFollowButtons(cards); injectMentionsLinks(cards, mentionCounts) }
   setFeedContext(withPlaylist)
   initModal()
 })
@@ -275,6 +280,7 @@ document.getElementById('btn-new').addEventListener('click', async () => {
     if (meta) meta.insertBefore(badge, meta.firstChild)
   })
   injectSourceFollowButtons(cards)
+  injectMentionsLinks(cards, mentionCounts)
   setFeedContext(withLabel)
   initModal()
 })
@@ -337,6 +343,15 @@ document.getElementById('discover-cards').addEventListener('click', e => {
   const rssBtn = e.target.closest('.btn-rss-copy')
   if (rssBtn) {
     handleRssCopy(rssBtn, rssBtn.dataset.rssId)
+    return
+  }
+
+  const linkBtn = e.target.closest('.btn-link-copy')
+  if (linkBtn) {
+    const url = `${location.origin}/discover/${linkBtn.dataset.linkId}`
+    navigator.clipboard.writeText(url).catch(() => {})
+    linkBtn.textContent = 'copied!'
+    setTimeout(() => { linkBtn.textContent = 'link' }, 1500)
     return
   }
 

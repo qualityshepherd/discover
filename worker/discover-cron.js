@@ -1,9 +1,11 @@
 import { parseFeed } from './feedParser.js'
 import {
-  makeId, getFeeds, getSourceIndex, getSourceData, saveSourceData, saveFeed,
+  makeId, getFeeds, getSourceIndex, getSourceData, saveSourceData, saveFeeds,
   KV_SOURCE_INDEX,
   listCurators, deleteCurator, isCuratorInactive
 } from './discover-kv.js'
+
+const VIDEO_DOMAINS = new Set(['youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv', 'rumble.com'])
 
 const STALE_MS = 4 * 60 * 60 * 1000
 const MAX_FETCHES_PER_RUN = 20
@@ -25,7 +27,7 @@ const stripProcessingInstructions = (xml) => xml.replace(/<\?(?!xml\s)[^?]*\?>/g
 
 export const fetchSource = async (url, limit = 3) => {
   try {
-    const res = await fetch(url, { headers: { 'User-Agent': 'discover/1.0 (+https://discover.brine.dev; RSS reader)', Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*' } })
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000), headers: { 'User-Agent': 'discover/1.0 (+https://discover.brine.dev; RSS reader)', Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*' } })
     if (!res.ok) return { posts: null, config: { url }, statusCode: res.status }
     const xml = stripProcessingInstructions(await res.text())
     return { posts: parseFeed(xml, { url, title: '', limit }), config: { url, limit }, siteUrl: parseSiteUrl(xml), statusCode: res.status }
@@ -83,6 +85,77 @@ export const applySourceDatas = (feed, sourceDatas, { keepOnEmpty = false } = {}
   feed.previewPosts = keepOnEmpty && !freshPosts.length ? (feed.previewPosts || []) : freshPosts
   feed.coverImage = valid.map(s => s.image).find(Boolean) || feed.coverImage || null
   feed.updateFrequency = computeFrequency(allPosts) ?? feed.updateFrequency ?? null
+}
+
+export const buildLinkGraph = async (kv, sourceIndex, freshData) => {
+  if (!freshData.size) return
+
+  const domainToSource = new Map()
+  for (const entry of Object.values(sourceIndex)) {
+    try {
+      const host = new URL(entry.url).hostname
+      domainToSource.set(host, entry.url)
+      const bare = host.replace(/^www\./, '')
+      if (bare !== host) domainToSource.set(bare, entry.url)
+    } catch {}
+  }
+
+  const byTarget = new Map() // targetHash → mention[]
+
+  for (const [sourceUrl, data] of freshData) {
+    if (!data?.posts?.length) continue
+    let fromDomain
+    try { fromDomain = new URL(sourceUrl).hostname.replace(/^www\./, '') } catch { continue }
+    const fromHash = makeId(sourceUrl)
+
+    for (const post of data.posts) {
+      if (!post.content) continue
+      const seenInPost = new Set()
+      for (const [, href] of post.content.matchAll(/href=["']([^"']+)["']/g)) {
+        try {
+          const domain = new URL(href).hostname.replace(/^www\./, '')
+          if (domain === fromDomain) continue
+          if (VIDEO_DOMAINS.has(domain)) continue
+          const targetUrl = domainToSource.get(domain)
+          if (!targetUrl) continue
+          const targetHash = makeId(targetUrl)
+          if (targetHash === fromHash) continue
+          const dedupeKey = `${fromHash}:${post.url}`
+          if (seenInPost.has(dedupeKey)) continue
+          seenInPost.add(dedupeKey)
+          if (!byTarget.has(targetHash)) byTarget.set(targetHash, [])
+          byTarget.get(targetHash).push({
+            fromSource: sourceUrl,
+            fromPost: post.url,
+            fromTitle: post.title || '',
+            fromDate: post.date || null,
+            fromContent: post.content || '',
+            toUrl: href,
+            foundAt: new Date().toISOString()
+          })
+        } catch {}
+      }
+    }
+  }
+
+  if (!byTarget.size) return
+
+  let indexDirty = false
+  await Promise.all([...byTarget.entries()].map(async ([targetHash, newItems]) => {
+    const existing = await kv.get(`mentions:${targetHash}`, { type: 'json' }) || []
+    const newKeys = new Set(newItems.map(m => `${m.fromSource}:${m.fromPost}`))
+    const kept = existing.filter(m => !newKeys.has(`${m.fromSource}:${m.fromPost}`))
+    const updated = [...kept, ...newItems]
+      .sort((a, b) => new Date(b.foundAt) - new Date(a.foundAt))
+      .slice(0, 100)
+    await kv.put(`mentions:${targetHash}`, JSON.stringify(updated))
+    if (sourceIndex[targetHash]) {
+      sourceIndex[targetHash].mentionCount = updated.length
+      indexDirty = true
+    }
+  }))
+
+  if (indexDirty) await kv.put(KV_SOURCE_INDEX, JSON.stringify(sourceIndex))
 }
 
 export const pruneCurators = async (kv) => {
@@ -144,6 +217,7 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
     (f.sources || []).some(s => updatedUrls.has(s))
   )
 
+  const changedFeeds = []
   for (const feed of needsUpdate) {
     const sourceDatas = await Promise.all(
       (feed.sources || []).map(url => freshData.has(url) ? freshData.get(url) : getSourceData(kv, url))
@@ -151,9 +225,11 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
     if (!sourceDatas.filter(Boolean).length) continue
     applySourceDatas(feed, sourceDatas, { keepOnEmpty: true })
     feed.lastUpdated = new Date(now).toISOString()
-    await saveFeed(kv, feed)
+    changedFeeds.push(feed)
   }
+  if (changedFeeds.length) await saveFeeds(kv, allFeeds, changedFeeds)
 
+  await buildLinkGraph(kv, sourceIndex, freshData).catch(err => console.error('buildLinkGraph failed:', err))
   await pruneCurators(kv).catch(err => console.error('pruneCurators failed:', err))
 
   return { processed: due.length, skipped: allSourceUrls.length - due.length }

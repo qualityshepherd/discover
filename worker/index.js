@@ -1,5 +1,5 @@
 import { trackHit, handleAnalytics, AnalyticsDO } from './analytics.js'
-import { handleDiscover, checkDiscoverFeeds } from './discover.js'
+import { handleDiscover, handleMentionsFeed, checkDiscoverFeeds } from './discover.js'
 import { handleAuth, memberByToken, isOwnerPubkey } from './auth.js'
 
 export { AnalyticsDO }
@@ -48,6 +48,10 @@ export default {
       ctx.waitUntil(trackHit(req, env))
       return new Response('ok')
     }
+
+    // Mentions feeds — public RSS per source
+    const mentionsMatch = path.match(/^\/api\/mentions\/([^/]+)\.xml$/)
+    if (mentionsMatch) return handleMentionsFeed(env.DISCOVER_KV, mentionsMatch[1], req.url)
 
     // Discover routes — public except /admin sub-paths (auth handled inside)
     if (path.startsWith('/api/discover')) return handleDiscover(req, env)

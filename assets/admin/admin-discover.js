@@ -14,12 +14,7 @@ $('btn-dc-block-save').addEventListener('click', async () => {
     const t = l.trim()
     try { return new URL(t).hostname.replace(/^www\./, '') } catch { return t }
   }).filter(Boolean)
-  const current = await api('GET', '/api/discover/admin/blocked')
-  const old = Array.isArray(current) ? current : []
-  await Promise.all([
-    ...old.filter(e => !entries.includes(e)).map(e => api('DELETE', '/api/discover/admin/blocked', { entry: e })),
-    ...entries.filter(e => !old.includes(e)).map(e => api('POST', '/api/discover/admin/blocked', { entry: e }))
-  ])
+  await api('PUT', '/api/discover/admin/blocked', { entries })
   await renderDcBlocked()
 })
 

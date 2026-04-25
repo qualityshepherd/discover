@@ -209,7 +209,9 @@
   flex-wrap: wrap;
 }
 
-.discover-type {
+.discover-type,
+.discover-freq,
+.discover-author {
   font-size: var(--text-xs);
   color: var(--color-text-muted);
   flex-shrink: 0;
@@ -221,21 +223,6 @@
   gap: var(--space-1);
   margin-top: var(--space-3);
   width: 100%;
-}
-
-
-.discover-freq {
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  flex-shrink: 0;
-}
-
-
-
-.discover-author {
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  flex-shrink: 0;
 }
 
 .discover-author a {

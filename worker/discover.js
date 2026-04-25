@@ -9,7 +9,7 @@ import {
   getCurator, saveCurator, deleteCurator, listCurators, addToCuratorIndex,
   isCuratorOf, shouldUpdateLastSeen
 } from './discover-kv.js'
-import { checkDiscoverFeeds, computeFrequency, fetchAndSaveSource, applySourceDatas, fetchSource } from './discover-cron.js'
+import { checkDiscoverFeeds, computeFrequency, fetchAndSaveSource, applySourceDatas, fetchSource, buildLinkGraph } from './discover-cron.js'
 
 // re-export for worker/index.js and tests
 export { checkDiscoverFeeds, computeFrequency, makeId, computeTags }
@@ -28,6 +28,10 @@ const json = (data, status = 200) =>
     status,
     headers: { 'Content-Type': 'application/json' }
   })
+
+const parseJsonBody = async (req) => {
+  try { return await req.json() } catch { return null }
+}
 
 const cors = (res) => {
   res.headers.set('Access-Control-Allow-Origin', '*')
@@ -73,7 +77,12 @@ const handleList = async (kv, url) => {
   const cutoff = Date.now() - TWO_WEEKS
   const hasNew = Object.values(sourceIndex).some(s => s.addedAt && new Date(s.addedAt).getTime() > cutoff)
 
-  return cors(json({ feeds: sorted, tags: computeTags(allFeeds), hasNew }))
+  const mentionCounts = {}
+  for (const [hash, entry] of Object.entries(sourceIndex)) {
+    if (entry.mentionCount) mentionCounts[hash] = entry.mentionCount
+  }
+
+  return cors(json({ feeds: sorted, tags: computeTags(allFeeds), hasNew, mentionCounts }))
 }
 
 // GET /api/discover/:id — preview posts served from KV, populated by cron
@@ -233,9 +242,10 @@ const handleNew = async (kv) => {
 const handlePreview = async (req, kv) => {
   const origin = req.headers.get('origin') || ''
   const host = new URL(req.url).host
-  if (!origin.includes(host)) return json({ error: 'forbidden' }, 403)
-  let body
-  try { body = await req.json() } catch { return json({ error: 'invalid json' }, 400) }
+  let originHost; try { originHost = new URL(origin).host } catch { originHost = '' }
+  if (originHost !== host) return json({ error: 'forbidden' }, 403)
+  const body = await parseJsonBody(req)
+  if (!body) return json({ error: 'invalid json' }, 400)
   const url = body.url?.trim().replace(/\/+$/, '')
   if (!url) return json({ error: 'url required' }, 400)
   if (!URL.canParse(url)) return json({ error: 'invalid url' }, 400)
@@ -264,8 +274,8 @@ const handlePreview = async (req, kv) => {
 
 // POST /api/discover/submit — public submission, no auth
 const handleSubmit = async (req, kv) => {
-  let body
-  try { body = await req.json() } catch { return json({ error: 'invalid json' }, 400) }
+  const body = await parseJsonBody(req)
+  if (!body) return json({ error: 'invalid json' }, 400)
 
   const url = body.url?.trim().replace(/\/+$/, '')
   if (!url) return json({ error: 'url required' }, 400)
@@ -313,8 +323,8 @@ const handleCuratorList = async (kv) => json(await listCurators(kv))
 
 // POST /api/discover/admin/curator/invite
 const handleCuratorInvite = async (req, kv) => {
-  let body
-  try { body = await req.json() } catch { return json({ error: 'invalid json' }, 400) }
+  const body = await parseJsonBody(req)
+  if (!body) return json({ error: 'invalid json' }, 400)
   const { pubkey, name, siteUrl, playlistId } = body
   if (!pubkey || !playlistId) return json({ error: 'pubkey and playlistId required' }, 400)
   const feed = await getFeed(kv, playlistId)
@@ -347,8 +357,8 @@ const handleCuratorRevoke = async (kv, pubkey) => {
 
 // POST /api/discover/admin/validate — owner-only batch URL validation
 const handleValidate = async (req, kv) => {
-  let body
-  try { body = await req.json() } catch { return json({ error: 'invalid json' }, 400) }
+  const body = await parseJsonBody(req)
+  if (!body) return json({ error: 'invalid json' }, 400)
   const urls = Array.isArray(body.urls) ? body.urls.slice(0, 20) : []
   if (!urls.length) return json({ error: 'urls required' }, 400)
 
@@ -375,8 +385,8 @@ const handleValidate = async (req, kv) => {
 
 // DELETE /api/discover/admin/pending — reject (remove without approving)
 const handlePendingReject = async (req, kv) => {
-  let body
-  try { body = await req.json() } catch { return json({ error: 'invalid json' }, 400) }
+  const body = await parseJsonBody(req)
+  if (!body) return json({ error: 'invalid json' }, 400)
   const url = body.url?.trim()
   if (!url) return json({ error: 'url required' }, 400)
   const pending = await getPending(kv) || []
@@ -393,13 +403,14 @@ const handlePendingList = async (kv) => {
 
 // POST /api/discover/admin/approve — approve a pending submission
 const handleApprove = async (req, kv) => {
-  let body
-  try { body = await req.json() } catch { return json({ error: 'invalid json' }, 400) }
+  const body = await parseJsonBody(req)
+  if (!body) return json({ error: 'invalid json' }, 400)
 
   const pending = await getPending(kv) || []
   const idx = pending.findIndex(f => f.url === body.url)
   if (idx === -1) return json({ error: 'not found' }, 404)
-  const item = pending.splice(idx, 1)[0]
+  const item = pending[idx]
+  const remaining = pending.filter((_, i) => i !== idx)
 
   if (body.playlistId) {
     const feed = await getFeed(kv, body.playlistId)
@@ -407,20 +418,20 @@ const handleApprove = async (req, kv) => {
     const sources = [...new Set([...(feed.sources || []), item.url])]
     await Promise.all([
       saveFeed(kv, { ...feed, sources }),
-      kv.put(KV_PENDING, JSON.stringify(pending))
+      kv.put(KV_PENDING, JSON.stringify(remaining))
     ])
     return json({ ok: true })
   }
 
   // no playlist — just dismiss from pending
-  await kv.put(KV_PENDING, JSON.stringify(pending))
+  await kv.put(KV_PENDING, JSON.stringify(remaining))
   return json({ ok: true })
 }
 
 // POST /api/discover/admin/add — add directly without going through pending
 const handleAdd = async (req, kv) => {
-  let body
-  try { body = await req.json() } catch { return json({ error: 'invalid json' }, 400) }
+  const body = await parseJsonBody(req)
+  if (!body) return json({ error: 'invalid json' }, 400)
 
   const sources = Array.isArray(body.sources) ? body.sources : (body.url ? [body.url] : [])
 
@@ -452,8 +463,8 @@ const handleAdd = async (req, kv) => {
 
 // PATCH /api/discover/admin/:id — edit an entry
 const handleEdit = async (req, kv, id) => {
-  let body
-  try { body = await req.json() } catch { return json({ error: 'invalid json' }, 400) }
+  const body = await parseJsonBody(req)
+  if (!body) return json({ error: 'invalid json' }, 400)
 
   const feed = await getFeed(kv, id)
   if (!feed) return json({ error: 'not found' }, 404)
@@ -488,8 +499,8 @@ const handleDelete = async (kv, id) => {
 
 // POST /api/discover/admin/source — register a source URL in the index
 const handleSourceRegister = async (req, kv) => {
-  let body
-  try { body = await req.json() } catch { return json({ error: 'invalid json' }, 400) }
+  const body = await parseJsonBody(req)
+  if (!body) return json({ error: 'invalid json' }, 400)
   const url = body.url?.trim().replace(/\/+$/, '')
   if (!url) return json({ error: 'url required' }, 400)
   if (!URL.canParse(url)) return json({ error: 'invalid url' }, 400)
@@ -504,8 +515,8 @@ const handleSourceRegister = async (req, kv) => {
 
 // POST /api/discover/admin/:id/sources — add source to a playlist
 const handlePlaylistSourceAdd = async (req, kv, id) => {
-  let body
-  try { body = await req.json() } catch { return json({ error: 'invalid json' }, 400) }
+  const body = await parseJsonBody(req)
+  if (!body) return json({ error: 'invalid json' }, 400)
   const url = body.url?.trim().replace(/\/+$/, '')
   if (!url) return json({ error: 'url required' }, 400)
   const feed = await getFeed(kv, id)
@@ -565,8 +576,8 @@ const handlePlaylistRefresh = async (kv, id) => {
 
 // DELETE /api/discover/admin/:id/sources — remove source from a playlist; delete KV if orphaned; recompute previewPosts immediately
 const handlePlaylistSourceRemove = async (req, kv, id) => {
-  let body
-  try { body = await req.json() } catch { return json({ error: 'invalid json' }, 400) }
+  const body = await parseJsonBody(req)
+  if (!body) return json({ error: 'invalid json' }, 400)
   const url = body.url?.trim().replace(/\/+$/, '')
   if (!url) return json({ error: 'url required' }, 400)
   const [feed, allFeeds] = await Promise.all([getFeed(kv, id), getFeeds(kv)])
@@ -586,8 +597,8 @@ const handlePlaylistSourceRemove = async (req, kv, id) => {
 
 // PATCH /api/discover/admin/source — rename a source URL across all playlists
 const handleSourceEdit = async (req, kv) => {
-  let body
-  try { body = await req.json() } catch { return json({ error: 'invalid json' }, 400) }
+  const body = await parseJsonBody(req)
+  if (!body) return json({ error: 'invalid json' }, 400)
   const oldUrl = body.oldUrl?.trim()
   const newUrl = body.newUrl?.trim().replace(/\/+$/, '')
   if (!oldUrl || !newUrl) return json({ error: 'oldUrl and newUrl required' }, 400)
@@ -630,8 +641,8 @@ const handleSourceEdit = async (req, kv) => {
 
 // DELETE /api/discover/admin/source — remove a source URL from all playlists
 const handleSourceDelete = async (req, kv) => {
-  let body
-  try { body = await req.json() } catch { return json({ error: 'invalid json' }, 400) }
+  const body = await parseJsonBody(req)
+  if (!body) return json({ error: 'invalid json' }, 400)
   const url = body.url?.trim().replace(/\/+$/, '')
   if (!url) return json({ error: 'url required' }, 400)
 
@@ -647,27 +658,84 @@ const handleSourceDelete = async (req, kv) => {
 // GET /api/discover/admin/blocked
 const handleBlockedList = async (kv) => json(await getBlocked(kv) || [])
 
-// POST /api/discover/admin/blocked
-const handleBlockedAdd = async (req, kv) => {
-  let body
-  try { body = await req.json() } catch { return json({ error: 'invalid json' }, 400) }
-  const entry = body.entry?.trim()
-  if (!entry) return json({ error: 'entry required' }, 400)
-  const blocked = await getBlocked(kv) || []
-  if (blocked.includes(entry)) return json({ error: 'already blocked' }, 409)
-  blocked.push(entry)
-  await kv.put(KV_BLOCKED, JSON.stringify(blocked))
-  return json({ ok: true })
+// PUT /api/discover/admin/blocked — replace entire blocked list atomically
+const handleBlockedSave = async (req, kv) => {
+  const body = await parseJsonBody(req)
+  if (!body || !Array.isArray(body.entries)) return json({ error: 'entries array required' }, 400)
+  const entries = [...new Set(body.entries.map(e => String(e).trim()).filter(Boolean))]
+  await kv.put(KV_BLOCKED, JSON.stringify(entries))
+  return json({ ok: true, count: entries.length })
 }
 
-// DELETE /api/discover/admin/blocked
-const handleBlockedRemove = async (req, kv) => {
-  let body
-  try { body = await req.json() } catch { return json({ error: 'invalid json' }, 400) }
-  const blocked = await getBlocked(kv) || []
-  const updated = blocked.filter(b => b !== body.entry)
-  await kv.put(KV_BLOCKED, JSON.stringify(updated))
-  return json({ ok: true })
+// GET /api/mentions/:sourceId.xml — RSS feed of posts from other discover sources linking to this source
+export const handleMentionsFeed = async (kv, sourceId, reqUrl) => {
+  const [mentions, sourceIndex] = await Promise.all([
+    kv.get(`mentions:${sourceId}`, { type: 'json' }),
+    getSourceIndex(kv)
+  ])
+  const items = mentions || []
+  const sourceEntry = Object.values(sourceIndex).find(s => makeId(s.url) === sourceId)
+  const domain = sourceEntry ? (() => { try { return new URL(sourceEntry.url).hostname } catch { return sourceId } })() : sourceId
+  const base = new URL(reqUrl).origin
+
+  const rssItems = items.map(m => `
+    <item>
+      <title>${xmlAttr(m.fromTitle || m.fromPost)}</title>
+      <link>${xmlAttr(m.fromPost)}</link>
+      <guid>${xmlAttr(m.fromPost)}</guid>
+      <pubDate>${new Date(m.fromDate || m.foundAt).toUTCString()}</pubDate>
+      <description><![CDATA[<p>↩ <a href="${m.fromSource}">${xmlAttr((() => { try { return new URL(m.fromSource).hostname } catch { return m.fromSource } })())}</a> mentioned <a href="${m.toUrl}">${xmlAttr(domain)}</a> in this post:</p>${m.fromContent || ''}]]></description>
+    </item>`).join('')
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Mentions of ${xmlAttr(domain)} · discover</title>
+    <description>Posts from other discover sources that linked to ${xmlAttr(domain)}</description>
+    <link>${base}/api/mentions/${sourceId}.xml</link>
+    ${rssItems}
+  </channel>
+</rss>`
+
+  return new Response(xml, {
+    headers: { 'Content-Type': 'application/rss+xml; charset=utf-8', 'Cache-Control': 'public, max-age=3600' }
+  })
+}
+
+// GET /api/discover/admin/webping — find posts in dataset that link to other sources in dataset
+const handleWebping = async (kv) => {
+  const [feeds, sourceIndex] = await Promise.all([getFeeds(kv) || [], getSourceIndex(kv)])
+
+  const sourceDomains = new Map() // hostname → source url
+  for (const entry of Object.values(sourceIndex)) {
+    try { sourceDomains.set(new URL(entry.url).hostname, entry.url) } catch {}
+  }
+
+  const allSourceUrls = [...new Set(feeds.flatMap(f => f.sources || []))]
+  const sourceDatas = await Promise.all(allSourceUrls.map(u => getSourceData(kv, u)))
+
+  const matches = []
+  for (let i = 0; i < allSourceUrls.length; i++) {
+    const data = sourceDatas[i]
+    if (!data?.posts) continue
+    const fromDomain = (() => { try { return new URL(allSourceUrls[i]).hostname } catch { return null } })()
+    for (const post of data.posts) {
+      if (!post.content) continue
+      const hrefs = [...post.content.matchAll(/href=["']([^"']+)["']/g)].map(m => m[1])
+      for (const href of hrefs) {
+        try {
+          const domain = new URL(href).hostname
+          if (domain === fromDomain) continue
+          if (domain.includes('youtube.com') || domain.includes('youtu.be')) continue
+          if (sourceDomains.has(domain)) {
+            matches.push({ from: allSourceUrls[i], post: post.url, postTitle: post.title, linksTo: href, targetSource: sourceDomains.get(domain) })
+          }
+        } catch {}
+      }
+    }
+  }
+
+  return json({ sources: allSourceUrls.length, matches })
 }
 
 // GET /api/discover/all/opml — full OPML of every approved playlist's sources
@@ -758,6 +826,7 @@ export const handleDiscover = async (req, env) => {
   // Owner-only routes
   if (!isOwner) return json({ error: 'unauthorized' }, 401)
 
+  if (method === 'GET' && path === '/api/discover/admin/webping') return handleWebping(kv)
   if (method === 'GET' && path === '/api/discover/admin/feeds') {
     const feeds = await getFeeds(kv) || []
     return json({ feeds, tags: computeTags(feeds) })
@@ -776,8 +845,15 @@ export const handleDiscover = async (req, env) => {
   if (method === 'DELETE' && path === '/api/discover/admin/source') return handleSourceDelete(req, kv)
 
   if (method === 'GET' && path === '/api/discover/admin/blocked') return handleBlockedList(kv)
-  if (method === 'POST' && path === '/api/discover/admin/blocked') return handleBlockedAdd(req, kv)
-  if (method === 'DELETE' && path === '/api/discover/admin/blocked') return handleBlockedRemove(req, kv)
+  if (method === 'PUT' && path === '/api/discover/admin/blocked') return handleBlockedSave(req, kv)
+  if (method === 'POST' && path === '/api/discover/admin/build-link-graph') {
+    const sourceIndex = await getSourceIndex(kv)
+    const allSourceUrls = [...new Set((await getFeeds(kv) || []).flatMap(f => f.sources || []))]
+    const sourceDatas = await Promise.all(allSourceUrls.map(u => getSourceData(kv, u)))
+    const freshData = new Map(allSourceUrls.map((u, i) => [u, sourceDatas[i]]).filter(([, d]) => d))
+    await buildLinkGraph(kv, sourceIndex, freshData)
+    return json({ ok: true, sources: freshData.size })
+  }
   if (method === 'POST' && path === '/api/discover/admin/check') {
     const body = await req.json().catch(() => ({}))
     const result = await checkDiscoverFeeds(env, { force: !!body.force })

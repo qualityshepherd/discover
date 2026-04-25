@@ -20,6 +20,8 @@
   <link rel="stylesheet" href="/css/discover.css">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="/favicon.png" type="image/png">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#191919">
   <script>document.documentElement.dataset.theme = localStorage.getItem('discover_theme') || 'dark'; if (localStorage.getItem('discover_token')) document.addEventListener('DOMContentLoaded', () => { const a = document.getElementById('nav-admin'); if (a) a.classList.remove('hidden') })</script>
 </head>
 <body>
@@ -44,8 +46,9 @@
 
   <main class="container">
     <div class="feed-posts">
-      <p><b>discover</b> is a curated list of RSS feeds worth following. Feeds from people writing, making and thinking.</p>
+      <p><b>discover</b> is a curated list of RSS feeds worth following. Feeds from people writing, making and thinking. <i>High quality signal.</i></p>
       <p>Browse the playlists, follow what fits, export to your reader of choice. No accounts. No tracking.</p>
+      <p>If your site is listed in discover, subscribe to your <b>mentions feed</b> to find out when other writers in the directory link to your work. Every source card has a ↩ mentions link.</p>
       <p class="muted"><a href="https://brine.dev" target="_blank" rel="noopener">brine</a> · <a href="mailto:ack@brine.dev">ack@brine.dev</a></p>
 
       <div class="feed-add-wrap" id="suggest-wrap">

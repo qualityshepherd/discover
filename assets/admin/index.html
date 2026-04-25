@@ -89,27 +89,27 @@
   <!-- discover -->
   <div id="view-discover" class="hidden">
     <div class="view-header">
-      <h2 class="view-title"><a href="/discover" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">discover</a></h2>
+      <h2 class="view-title"><a href="/discover" target="_blank" rel="noopener">discover</a></h2>
       <button id="btn-dc-check" class="btn btn-sm">refresh feeds</button>
     </div>
-    <p id="dc-check-status" style="font-size:var(--text-xs);color:var(--color-text-muted);margin-top:var(--space-1)"></p>
+    <p id="dc-check-status"></p>
 
     <!-- add playlist form -->
     <div class="field">
       <div class="row field">
-        <div class="field" style="flex:2">
+        <div class="field flex-2">
           <label for="dc-title">title</label>
           <input type="text" id="dc-title" placeholder="Playlist name">
         </div>
-        <div class="field" style="flex:2">
+        <div class="field flex-2">
           <label for="dc-tags">tags</label>
           <input type="text" id="dc-tags" placeholder="design, essays, tech">
         </div>
-        <div class="field" style="flex:1">
+        <div class="field flex-1">
           <label for="dc-author-name">author</label>
           <input type="text" id="dc-author-name" placeholder="name">
         </div>
-        <div class="field" style="flex:1">
+        <div class="field flex-1">
           <label for="dc-author-url">author url</label>
           <input type="url" id="dc-author-url" placeholder="https://...">
         </div>
@@ -120,7 +120,7 @@
       </div>
       <div class="flex gap-3 items-center">
         <button class="btn btn-primary" id="btn-dc-add">add playlist</button>
-        <label class="flex items-center gap-2" style="font-size:var(--text-sm);cursor:pointer">
+        <label class="label-inline">
           <input type="checkbox" id="dc-featured"> featured
         </label>
         <span class="error hidden" id="dc-error"></span>
@@ -137,14 +137,14 @@
     <div class="field mt-4">
       <h3 class="view-subtitle">sources <span id="dc-sources-count" class="muted"></span></h3>
       <div class="flex gap-3 items-center field">
-        <input type="url" id="dc-source-url" placeholder="https://example.com/feed.xml" style="flex:1">
-        <select id="dc-source-playlist" style="width:140px"><option value="">+ playlist</option></select>
+        <input type="url" id="dc-source-url" placeholder="https://example.com/feed.xml">
+        <select id="dc-source-playlist"><option value="">+ playlist</option></select>
         <button class="btn btn-sm" id="btn-dc-add-source">add source</button>
       </div>
       <div class="flex gap-3 items-center field">
-        <input type="text" id="dc-sources-search" placeholder="filter sources…" style="flex:1">
-        <select id="dc-sources-filter-playlist" style="width:160px"><option value="">all playlists</option><option value="__none__">no playlist</option></select>
-        <select id="dc-sources-filter-status" style="width:130px">
+        <input type="text" id="dc-sources-search" placeholder="filter sources…">
+        <select id="dc-sources-filter-playlist"><option value="">all playlists</option><option value="__none__">no playlist</option></select>
+        <select id="dc-sources-filter-status">
           <option value="">all statuses</option>
           <option value="ok">ok</option>
           <option value="warn">warning</option>
@@ -164,10 +164,10 @@
     <!-- batch import -->
     <div class="field mt-6">
       <h3 class="view-subtitle">batch import</h3>
-      <textarea id="dc-batch-urls" rows="6" placeholder="paste feed URLs, one per line" style="width:100%;font-size:var(--text-sm);font-family:monospace"></textarea>
+      <textarea id="dc-batch-urls" rows="6" placeholder="paste feed URLs, one per line" class="textarea-code"></textarea>
       <div class="flex gap-3 items-center mt-2">
         <button class="btn btn-sm" id="btn-dc-batch-validate">validate</button>
-        <select id="dc-batch-playlist" style="width:180px"><option value="">no playlist</option></select>
+        <select id="dc-batch-playlist"><option value="">no playlist</option></select>
       </div>
       <div id="dc-batch-results"></div>
     </div>
@@ -175,7 +175,7 @@
     <!-- blocklist -->
     <div class="field mt-6">
       <h3 class="view-subtitle">blocked domains</h3>
-      <textarea id="dc-block-textarea" rows="4" placeholder="one domain or url per line" style="width:100%;font-size:var(--text-sm);font-family:monospace"></textarea>
+      <textarea id="dc-block-textarea" rows="4" placeholder="one domain or url per line" class="textarea-code"></textarea>
       <button class="btn btn-sm mt-2" id="btn-dc-block-save">save</button>
     </div>
   </div>

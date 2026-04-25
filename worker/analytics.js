@@ -2,7 +2,7 @@ import ANALYTICS_TEMPLATE from './analyticsTemplate.js'
 
 const SKIP_PATHS = [
   '/.well-known', '/actor', '/api', '/favicon', '/feeds.json', '/feedIndex.json',
-  '/index.json', '/nodeinfo', '/robots.txt', '/sitemap', '/src'
+  '/index.json', '/manifest.json', '/nodeinfo', '/robots.txt', '/sitemap', '/src'
 ]
 
 const SKIP_EXTENSIONS = [

@@ -1,8 +1,8 @@
 // KV key constants
 
-export const KV_FEEDS = 'discover:feeds' // legacy — migration only
 export const KV_INDEX = 'discover:index' // ordered list of feed IDs
 export const KV_PREFIX = 'discover:feed:' // one entry per mix
+export const KV_FEEDS_LIST = 'discover:feeds-list' // all feeds as single JSON blob (1-read cache)
 export const KV_SOURCE_INDEX = 'discover:source-index' // { hash: { url, lastFetched } }
 export const KV_SOURCE_PREFIX = 'discover:source:' // one entry per unique RSS URL
 export const KV_PENDING = 'discover:pending'
@@ -21,25 +21,35 @@ export const makeId = (url) => {
 
 export const getFeed = (kv, id) => kv.get(`${KV_PREFIX}${id}`, { type: 'json' })
 
-export const saveFeed = (kv, feed) => kv.put(`${KV_PREFIX}${feed.id}`, JSON.stringify(feed))
-
 export const getIndex = async (kv) => (await kv.get(KV_INDEX, { type: 'json' })) || []
 
-// Read all feeds. Auto-migrates from legacy single-key format on first call.
 export const getFeeds = async (kv) => {
-  const legacy = await kv.get(KV_FEEDS, { type: 'json' })
-  if (legacy?.length) {
-    await Promise.all([
-      ...legacy.map(f => saveFeed(kv, f)),
-      kv.put(KV_INDEX, JSON.stringify(legacy.map(f => f.id))),
-      kv.delete(KV_FEEDS)
-    ])
-    return legacy
-  }
+  const cached = await kv.get(KV_FEEDS_LIST, { type: 'json' })
+  if (cached !== null) return cached
+  // First run fallback: read from index + individual keys, then seed the cache
   const ids = await getIndex(kv)
   if (!ids.length) return []
-  const feeds = await Promise.all(ids.map(id => getFeed(kv, id)))
-  return feeds.filter(Boolean)
+  const feeds = (await Promise.all(ids.map(id => getFeed(kv, id)))).filter(Boolean)
+  await kv.put(KV_FEEDS_LIST, JSON.stringify(feeds))
+  return feeds
+}
+
+export const saveFeed = async (kv, feed) => {
+  const feeds = await getFeeds(kv)
+  const idx = feeds.findIndex(f => f.id === feed.id)
+  const updated = idx >= 0 ? feeds.map((f, i) => i === idx ? feed : f) : [...feeds, feed]
+  await Promise.all([
+    kv.put(`${KV_PREFIX}${feed.id}`, JSON.stringify(feed)),
+    kv.put(KV_FEEDS_LIST, JSON.stringify(updated))
+  ])
+}
+
+// Batch save for cron: write individual keys + list in one round, no per-feed reads
+export const saveFeeds = async (kv, allFeeds, updated) => {
+  await Promise.all([
+    ...updated.map(f => kv.put(`${KV_PREFIX}${f.id}`, JSON.stringify(f))),
+    kv.put(KV_FEEDS_LIST, JSON.stringify(allFeeds))
+  ])
 }
 
 export const addToIndex = async (kv, id) => {
@@ -48,8 +58,11 @@ export const addToIndex = async (kv, id) => {
 }
 
 export const removeFromIndex = async (kv, id) => {
-  const ids = await getIndex(kv)
-  await kv.put(KV_INDEX, JSON.stringify(ids.filter(i => i !== id)))
+  const [ids, feeds] = await Promise.all([getIndex(kv), getFeeds(kv)])
+  await Promise.all([
+    kv.put(KV_INDEX, JSON.stringify(ids.filter(i => i !== id))),
+    kv.put(KV_FEEDS_LIST, JSON.stringify(feeds.filter(f => f.id !== id)))
+  ])
 }
 
 // Source KV helpers

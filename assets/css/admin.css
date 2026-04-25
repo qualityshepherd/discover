@@ -93,6 +93,7 @@ header .site-brand a .site-logo { height: 36px; width: auto; color: var(--color-
 /* Utilities */
 .flex { display: flex; }
 .flex-1 { flex: 1; }
+.flex-2 { flex: 2; }
 .flex-wrap { flex-wrap: wrap; }
 .items-center { align-items: center; }
 .items-end { align-items: flex-end; }
@@ -109,6 +110,17 @@ header .site-brand a .site-logo { height: 36px; width: auto; color: var(--color-
 .mt-8 { margin-top: var(--s8); }
 .mb-2 { margin-bottom: var(--s2); }
 .mb-3 { margin-bottom: var(--s3); }
+
+/* specific element overrides */
+#nav-home { font-size: 1rem; }
+#dc-check-status { font-size: 0.82rem; color: var(--color-text-muted); margin-top: var(--s1); }
+#dc-source-url, #dc-sources-search { flex: 1; }
+#dc-source-playlist { width: 140px; }
+#dc-sources-filter-playlist { width: 160px; }
+#dc-sources-filter-status { width: 130px; }
+#dc-batch-playlist { width: 180px; }
+.textarea-code { width: 100%; font-size: 0.95rem; font-family: var(--font-mono); }
+.label-inline { font-size: 1rem; cursor: pointer; display: flex; align-items: center; gap: var(--s2); margin-bottom: 0; }
 
 /* Buttons */
 .btn {

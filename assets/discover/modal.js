@@ -32,6 +32,8 @@ export const closeModal = () => {
   modal.querySelector('.feed-modal-body').innerHTML = ''
 }
 
+const feedDomain = (url) => { try { return new URL(url).hostname } catch { return '' } }
+
 const renderModalItem = (modal, item) => {
   modal.querySelector('.feed-modal-title').textContent = item.title || ''
   const body = modal.querySelector('.feed-modal-body')
@@ -49,6 +51,15 @@ const renderModalItem = (modal, item) => {
   }
   modal.querySelector('.feed-modal-prev').disabled = currentIndex <= 0
   modal.querySelector('.feed-modal-next').disabled = currentIndex >= feedList.length - 1
+
+  const sourceEl = modal.querySelector('.feed-modal-source')
+  const domain = feedDomain(item.feed?.url || item.url || '')
+  const favicon = domain ? `<img src="https://www.google.com/s2/favicons?domain=${domain}&sz=16" class="feed-avatar" alt="" onerror="this.style.display='none'">` : ''
+  const feedName = item.feed?.title || domain || ''
+  const playlist = item.fromPlaylist && item.fromPlaylistId
+    ? ` · <a class="feed-modal-playlist" href="/discover/${item.fromPlaylistId}">${item.fromPlaylist}</a>`
+    : ''
+  sourceEl.innerHTML = feedName ? `${favicon}<span>${feedName}</span>${playlist}` : ''
 }
 
 const navigateTo = (index) => {
@@ -83,8 +94,11 @@ export const initModal = () => {
       </div>
       <div class="feed-modal-body"></div>
       <div class="feed-modal-footer">
-        <a class="feed-modal-original" href="#" target="_blank" rel="noopener noreferrer">↗ visit website</a>
-        <a class="feed-modal-subscribe" href="#" target="_blank" rel="noopener noreferrer">+ subscribe ◆</a>
+        <div class="feed-modal-source"></div>
+        <div class="feed-modal-links">
+          <a class="feed-modal-original" href="#" target="_blank" rel="noopener noreferrer">↗ website</a>
+          <a class="feed-modal-subscribe hidden" href="#" target="_blank" rel="noopener noreferrer">rss</a>
+        </div>
       </div>
     </div>
   `

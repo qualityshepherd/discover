@@ -11,6 +11,10 @@ const json = (data, status = 200) =>
     headers: { 'Content-Type': 'application/json' }
   })
 
+const parseJsonBody = async (req) => {
+  try { return await req.json() } catch { return null }
+}
+
 export const timingSafeEqual = (a, b) => {
   const te = new TextEncoder()
   const ab = te.encode(a)
@@ -60,8 +64,8 @@ export const handleAuth = async (req, env) => {
 
   if (method === 'POST' && path === '/api/login') {
     const ip = req.headers.get('CF-Connecting-IP') || 'unknown'
-    let body
-    try { body = await req.json() } catch { return json({ error: 'invalid json' }, 400) }
+    const body = await parseJsonBody(req)
+    if (!body) return json({ error: 'invalid json' }, 400)
     const { pubkey, challenge, sig } = body
 
     if (!env.OWNER) return json({ error: 'not configured' }, 503)

@@ -1,4 +1,5 @@
 import { memberByToken, isOwnerPubkey } from './auth.js'
+import { json, parseJsonBody } from './utils.js'
 import {
   makeId, computeTags,
   getFeed, saveFeed, getFeeds, addToIndex, removeFromIndex,
@@ -21,16 +22,6 @@ export const isClickThrough = (posts) => {
     const text = (p.content || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim()
     return text.length > 100
   })
-}
-
-const json = (data, status = 200) =>
-  new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json' }
-  })
-
-const parseJsonBody = async (req) => {
-  try { return await req.json() } catch { return null }
 }
 
 const cors = (res) => {
@@ -809,7 +800,7 @@ export const handleDiscover = async (req, env) => {
     return handlePlaylistRefresh(kv, id)
   }
 
-  const ADMIN_RESERVED = new Set(['source', 'sources', 'feeds', 'pending', 'approve', 'add', 'blocked', 'check', 'normalize-urls', 'reset-streaks', 'curator', 'new', 'random', 'submit', 'feed', 'validate', 'preview'])
+  const ADMIN_RESERVED = new Set(['source', 'sources', 'feeds', 'pending', 'approve', 'add', 'blocked', 'check', 'normalize-urls', 'reset-streaks', 'curator', 'new', 'random', 'submit', 'feed', 'validate', 'preview', 'status'])
   const adminIdMatch = path.match(/^\/api\/discover\/admin\/([^/]+)$/)
   if (adminIdMatch && !ADMIN_RESERVED.has(adminIdMatch[1])) {
     const id = adminIdMatch[1]
@@ -825,6 +816,11 @@ export const handleDiscover = async (req, env) => {
 
   // Owner-only routes
   if (!isOwner) return json({ error: 'unauthorized' }, 401)
+
+  if (method === 'GET' && path === '/api/discover/admin/status') {
+    const lastCronOk = await kv.get('cron:lastOk')
+    return json({ lastCronOk })
+  }
 
   if (method === 'GET' && path === '/api/discover/admin/webping') return handleWebping(kv)
   if (method === 'GET' && path === '/api/discover/admin/feeds') {

@@ -1,11 +1,9 @@
 import { trackHit, handleAnalytics, AnalyticsDO } from './analytics.js'
 import { handleDiscover, handleMentionsFeed, checkDiscoverFeeds } from './discover.js'
 import { handleAuth, memberByToken, isOwnerPubkey } from './auth.js'
+import { json } from './utils.js'
 
 export { AnalyticsDO }
-
-const json = (data, status = 200) =>
-  new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
 
 const escHtml = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 

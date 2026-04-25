@@ -231,6 +231,7 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
 
   await buildLinkGraph(kv, sourceIndex, freshData).catch(err => console.error('buildLinkGraph failed:', err))
   await pruneCurators(kv).catch(err => console.error('pruneCurators failed:', err))
+  await kv.put('cron:lastOk', new Date().toISOString())
 
   return { processed: due.length, skipped: allSourceUrls.length - due.length }
 }

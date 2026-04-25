@@ -39,7 +39,17 @@ async function showLogin () {
 async function showDiscover () {
   if (!getToken()) return showLogin()
   showView('view-discover'); showNav()
-  await Promise.all([renderDcEntries(), renderDcBlocked(), renderDcPending()])
+  await Promise.all([renderDcEntries(), renderDcBlocked(), renderDcPending(), checkCronHealth()])
+}
+
+async function checkCronHealth () {
+  const status = await api('GET', '/api/discover/admin/status')
+  const el = $('dc-check-status')
+  if (!status?.lastCronOk) { el.textContent = 'cron: never run'; return }
+  const age = Date.now() - new Date(status.lastCronOk).getTime()
+  if (age > 25 * 60 * 60 * 1000) {
+    el.textContent = `⚠ cron last ok ${Math.round(age / 3600000)}h ago — may be stale`
+  }
 }
 
 async function showAnalytics () {

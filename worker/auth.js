@@ -2,18 +2,9 @@ import {
   verifyChallenge, makeSession, isSessionValid,
   isValidToken, scorePassphrase
 } from '../assets/lib/keys.js'
+import { json, parseJsonBody } from './utils.js'
 
 export { scorePassphrase, isValidToken, makeSession, isSessionValid }
-
-const json = (data, status = 200) =>
-  new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json' }
-  })
-
-const parseJsonBody = async (req) => {
-  try { return await req.json() } catch { return null }
-}
 
 export const timingSafeEqual = (a, b) => {
   const te = new TextEncoder()

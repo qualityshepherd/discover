@@ -329,6 +329,8 @@ export async function renderDcPending () {
   if (badge) {
     badge.textContent = list.length || ''
     badge.classList.toggle('hidden', !list.length)
+    badge.style.cursor = list.length ? 'pointer' : ''
+    badge.onclick = list.length ? () => $('dc-pending-list').scrollIntoView({ behavior: 'smooth', block: 'start' }) : null
   }
   if (!el) return
   if (!list.length) { el.innerHTML = '<p class="muted" style="font-size:var(--text-sm)">no pending submissions.</p>'; return }
@@ -346,6 +348,7 @@ export async function renderDcPending () {
         </select>
         <button class="btn btn-sm btn-primary dc-pending-approve">approve</button>
         <button class="btn btn-sm dc-pending-reject">reject</button>
+        <button class="btn btn-sm btn-danger dc-pending-block">block</button>
         <a href="${escHtml(p.url)}" target="_blank" rel="noopener" class="icon-btn" aria-label="Open feed">${ICON_EXTERNAL}</a>
       </div>
     </div>`).join('')
@@ -366,9 +369,27 @@ export async function renderDcPending () {
     const row = btn.closest('[data-pending-url]')
     btn.addEventListener('click', async () => {
       const url = row.dataset.pendingUrl
-      if (!confirm(`Reject and remove "${url}"?`)) return
       const res = await api('DELETE', '/api/discover/admin/pending', { url })
       if (res.error) { alert(res.error); return }
+      await renderDcPending()
+    })
+  })
+
+  el.querySelectorAll('.dc-pending-block').forEach(btn => {
+    const row = btn.closest('[data-pending-url]')
+    btn.addEventListener('click', async () => {
+      const url = row.dataset.pendingUrl
+      let domain
+      try { domain = new URL(url).hostname.replace(/^www\./, '') } catch { domain = url }
+      const [rejectRes, blocked] = await Promise.all([
+        api('DELETE', '/api/discover/admin/pending', { url }),
+        api('GET', '/api/discover/admin/blocked')
+      ])
+      if (rejectRes.error) { alert(rejectRes.error); return }
+      const list = Array.isArray(blocked) ? blocked : []
+      if (!list.includes(domain)) {
+        await api('PUT', '/api/discover/admin/blocked', { entries: [...list, domain] })
+      }
       await renderDcPending()
     })
   })

@@ -42,8 +42,7 @@ const renderBrowse = (entries, tags) => {
   }
   const featured = entries.filter(e => e.featured)
   const rest = shuffle(entries.filter(e => !e.featured))
-  const newCard = (newCardPosts === null || newCardPosts.length) ? renderNewCard() : ''
-  cards.innerHTML = newCard + [...featured, ...rest].map(renderCard).join('')
+  cards.innerHTML = [...featured, ...rest].map(renderCard).join('')
 }
 
 const filterAndRender = () => {
@@ -75,17 +74,6 @@ const syncUrl = () => {
   history.replaceState({}, '', qs ? `/?${qs}` : '/')
 }
 
-const NEW_CARD_ID = '__new__'
-let newCardPosts = []
-
-const renderNewCard = () => `
-  <div class="discover-card discover-card-new" data-id="${NEW_CARD_ID}" data-letter="N" style="--card-accent:#5a8f6a">
-    <div class="discover-card-body">
-      <a class="discover-card-title" href="#">New Discoveries</a>
-      <div class="discover-card-desc">sources added in the last 2 weeks</div>
-    </div>
-  </div>`
-
 const loadBrowse = async () => {
   window.scrollTo(0, 0)
   showView('browse')
@@ -102,7 +90,6 @@ const loadBrowse = async () => {
   allEntries = data.feeds || []
   allTags = data.tags || []
   mentionCounts = data.mentionCounts || {}
-  newCardPosts = data.hasNew ? null : [] // null = not yet loaded; [] = known empty
 
   renderBrowse(allEntries, data.tags || [])
   if (activeTags.size || qParam) filterAndRender()
@@ -136,7 +123,6 @@ const openDrawer = async (id) => {
   if (!card) return
   card.classList.add('expanded')
 
-  const isNew = id === NEW_CARD_ID
   const entrySources = allEntries.find(e => e.id === id)?.sources || []
 
   const drawer = document.createElement('div')
@@ -144,9 +130,9 @@ const openDrawer = async (id) => {
   drawer.dataset.id = id
   drawer.innerHTML = `
     <div class="discover-drawer-actions">
-      ${isNew ? '' : followBtnHtml(id, entrySources)}
-      ${isNew ? '' : rssCopyBtnHtml(id)}
-      ${isNew ? '' : `<button class="btn btn-sm btn-link-copy" data-link-id="${id}" title="Copy playlist link">link</button>`}
+      ${followBtnHtml(id, entrySources)}
+      ${rssCopyBtnHtml(id)}
+      <button class="btn btn-sm btn-link-copy" data-link-id="${id}" title="Copy playlist link">link</button>
       <button class="discover-drawer-close btn btn-sm" aria-label="Close">✕</button>
     </div>
     <div class="discover-drawer-feed"><p class="muted">loading…</p></div>
@@ -156,17 +142,9 @@ const openDrawer = async (id) => {
 
   const feedEl = drawer.querySelector('.discover-drawer-feed')
 
-  let posts
-  if (isNew) {
-    if (newCardPosts === null) {
-      newCardPosts = await fetch('/api/discover/new').then(r => r.ok ? r.json() : []).catch(() => [])
-    }
-    posts = newCardPosts
-  } else {
-    const res = await fetch(`/api/discover/${id}`)
-    if (!res.ok) { feedEl.innerHTML = '<p class="muted">could not load feed.</p>'; return }
-    posts = await res.json()
-  }
+  const res = await fetch(`/api/discover/${id}`)
+  if (!res.ok) { feedEl.innerHTML = '<p class="muted">could not load feed.</p>'; return }
+  const posts = await res.json()
 
   if (!posts.length) { feedEl.innerHTML = '<p class="muted">no posts found.</p>'; return }
 
@@ -272,13 +250,6 @@ document.getElementById('btn-new').addEventListener('click', async () => {
     feed: { ...p.feed, title: p.feed?.title ? `${p.feed.title} · ${p.fromPlaylist}` : p.fromPlaylist }
   }))
   cards.innerHTML = withLabel.map(feedsItemTemplate).join('')
-  cards.querySelectorAll('.feed-post').forEach(post => {
-    const badge = document.createElement('span')
-    badge.className = 'post-new-badge'
-    badge.textContent = 'new'
-    const meta = post.querySelector('.feed-meta')
-    if (meta) meta.insertBefore(badge, meta.firstChild)
-  })
   injectSourceFollowButtons(cards)
   injectMentionsLinks(cards, mentionCounts)
   setFeedContext(withLabel)

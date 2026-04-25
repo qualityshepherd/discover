@@ -73,7 +73,10 @@ const handleList = async (kv, url) => {
     if (entry.mentionCount) mentionCounts[hash] = entry.mentionCount
   }
 
-  return cors(json({ feeds: sorted, tags: computeTags(allFeeds), hasNew, mentionCounts }))
+  const body = JSON.stringify({ feeds: sorted, tags: computeTags(allFeeds), hasNew, mentionCounts })
+  const headers = { 'Content-Type': 'application/json' }
+  if (!tag && !q) headers['Cache-Control'] = 'public, max-age=1800'
+  return cors(new Response(body, { headers }))
 }
 
 // GET /api/discover/:id — preview posts served from KV, populated by cron
@@ -226,7 +229,7 @@ const handleNew = async (kv) => {
   }))
   const results = fetched.filter(Boolean)
   results.sort((a, b) => new Date(b.sourceAddedAt) - new Date(a.sourceAddedAt))
-  return cors(json(results.slice(0, 12)))
+  return cors(json(results.slice(0, 20)))
 }
 
 // POST /api/discover/preview — fetch a feed URL server-side, return metadata; saves nothing

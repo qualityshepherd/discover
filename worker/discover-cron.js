@@ -8,7 +8,7 @@ import {
 const VIDEO_DOMAINS = new Set(['youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv', 'rumble.com'])
 
 const STALE_MS = 4 * 60 * 60 * 1000
-const MAX_FETCHES_PER_RUN = 20
+const MAX_FETCHES_PER_RUN = 10
 
 // Extract the human site URL from RSS/Atom XML (not the feed URL itself)
 const parseSiteUrl = (xml) => {

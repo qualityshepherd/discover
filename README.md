@@ -7,11 +7,11 @@ Hand-picked playlists of RSS/Atom feeds, organised by vibe. Browse, follow, read
 ## Features
 
 - **Browse** — curated playlists with tag filtering, search, random shuffle, and a "new" view of recently-added sources
-- **My Feed** — follow playlists or individual sources, read posts inline, export as OPML, add any RSS URL directly
+- **Feed** — follow playlists or individual sources, read posts inline, export/import OPML, add any RSS URL directly
 - **Suggest a feed** — public submission form on `/about`; server-side validation rejects click-through and invalid feeds before they hit the queue
 - **Webmentions via RSS** — every source gets a `/api/mentions/{id}.xml` feed. When other sources in the directory link to it, a mention appears. Subscribe in any RSS reader to find out when someone cites your work
 - **PWA** — installable, dark/light theme, works offline for cached views
-- **Analytics** — privacy-friendly, no third parties. Tracks hits, top paths, countries. No cookies, no JS fingerprinting
+- **Analytics** — privacy-friendly, no third parties. Tracks hits, top paths, countries, and RSS playlist subscribers. No cookies, no JS fingerprinting
 
 ## Requirements
 

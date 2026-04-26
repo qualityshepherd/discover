@@ -1,56 +1,60 @@
 import { feedsItemTemplate } from '../src/templates.js'
 import { openModal, initModal, resetModal, setFeedContext, getFeedItem } from '../discover/modal.js'
-import { getFollows, removeFollow, getSourceFollows, hasSourceFollow, toggleSourceFollow, removeSourceFollow, getCustomFeeds, addCustomFeed, removeCustomFeed, hasCustomFeed, clearFollows, clearSourceFollows, clearCustomFeeds, clearFollowedPlaylists } from '../discover/follows.js'
+import { getFollows, getSourceFollows, hasSourceFollow, toggleSourceFollow, getCustomFeeds, addCustomFeed, hasCustomFeed, clearFollows, clearSourceFollows, clearCustomFeeds, clearFollowedPlaylists } from '../discover/follows.js'
 
 let allPosts = []
-let allPlaylists = []
-let activePlaylist = null
 
-const injectRemoveButtons = (container) => {
-  container.querySelectorAll('.feed-post').forEach(post => {
-    const feedUrl = post.dataset.feedUrl
-    if (!feedUrl) return
-    const btn = document.createElement('button')
-    btn.className = 'feed-post-remove'
-    btn.dataset.removeUrl = feedUrl
-    btn.title = 'remove from feed'
-    btn.textContent = '✕'
-    post.querySelector('.feed-meta')?.appendChild(btn)
-  })
+const PAGE = 20
+const CACHE_KEY = 'discover_feed_cache'
+const CACHE_TTL = 42 * 60 * 1000
+
+const readCache = () => {
+  try {
+    const c = JSON.parse(localStorage.getItem(CACHE_KEY))
+    if (c && Date.now() - c.ts < CACHE_TTL) return c.posts
+  } catch {}
+  return null
 }
+
+const writeCache = (posts) => {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ posts, ts: Date.now() })) } catch {}
+}
+
+const clearCache = () => localStorage.removeItem(CACHE_KEY)
 
 const renderPosts = () => {
   const container = document.getElementById('feed-posts')
-  const posts = activePlaylist
-    ? allPosts.filter(p => p.fromPlaylistId === activePlaylist || p.fromCustomFeedUrl === activePlaylist)
-    : allPosts
-
-  if (!posts.length) {
+  if (!allPosts.length) {
     container.innerHTML = '<p class="muted">no posts found.</p>'
     return
   }
 
   resetModal()
-  setFeedContext(posts)
-  container.innerHTML = posts.map(feedsItemTemplate).join('')
-  injectRemoveButtons(container)
+  setFeedContext(allPosts)
   initModal()
-}
 
-const renderPlaylistStrip = () => {
-  const strip = document.getElementById('feed-playlist-strip')
-  const sourceFollows = getSourceFollows()
-  const customFeeds = getCustomFeeds()
-  const chips = [
-    ...allPlaylists.map(p => ({ id: p.id, title: p.title, type: 'playlist' })),
-    ...sourceFollows.map(url => ({ id: url, title: new URL(url).hostname, type: 'source' })),
-    ...customFeeds.map(f => ({ id: f.url, title: f.title, type: 'custom' }))
-  ]
-  if (!chips.length) { strip.classList.add('hidden'); return }
-  strip.classList.remove('hidden')
-  strip.innerHTML = chips.map(p =>
-    `<button class="discover-tag feed-playlist-chip${activePlaylist === p.id ? ' active' : ''}" data-id="${p.id}" data-type="${p.type}">${p.title} <span class="feed-custom-remove" data-id="${p.id}" data-type="${p.type}" title="remove">✕</span></button>`
-  ).join('')
+  let rendered = 0
+  container.innerHTML = ''
+
+  const renderMore = () => {
+    const batch = allPosts.slice(rendered, rendered + PAGE)
+    if (!batch.length) return
+    const frag = document.createElement('div')
+    frag.innerHTML = batch.map(p => feedsItemTemplate({ ...p, fromPlaylist: null, fromPlaylistId: null })).join('')
+    container.appendChild(frag)
+    rendered += batch.length
+  }
+
+  renderMore()
+
+  const sentinel = document.createElement('div')
+  container.appendChild(sentinel)
+  const observer = new IntersectionObserver(entries => {
+    if (!entries[0].isIntersecting) return
+    if (rendered >= allPosts.length) { observer.disconnect(); sentinel.remove(); return }
+    renderMore()
+  }, { rootMargin: '200px' })
+  observer.observe(sentinel)
 }
 
 const load = async () => {
@@ -60,12 +64,13 @@ const load = async () => {
   const container = document.getElementById('feed-posts')
 
   if (!follows.length && !sourceFollows.length && !customFeeds.length) {
-    allPlaylists = []
     allPosts = []
-    renderPlaylistStrip()
-    container.innerHTML = '<p class="muted">not following anything yet — <a href="/">browse discover</a> to follow some feeds, or paste a feed URL above.</p>'
+    container.innerHTML = '<p class="muted">follow sources from <a href="/">discover</a>, add your favorite feed or import an OPML file.</p>'
     return
   }
+
+  const cached = readCache()
+  if (cached) { allPosts = cached; renderPosts(); return }
 
   container.innerHTML = '<p class="muted">loading…</p>'
 
@@ -77,60 +82,20 @@ const load = async () => {
     const res = await fetch(`/api/discover/feed?${params}`)
     if (res.ok) {
       const data = await res.json()
-      // 1 post per source — my feed is for auditing, not reading
-      const seen = new Set()
-      apiPosts = (data.posts || []).filter(p => {
-        const key = p.feed?.url || p.fromSource || p.url
-        if (seen.has(key)) return false
-        seen.add(key)
-        return true
-      })
-      allPlaylists = data.playlists || []
+      apiPosts = data.posts || []
     }
-  } else {
-    allPlaylists = []
   }
 
   const customPosts = customFeeds
     .filter(f => f.posts?.length)
-    .map(f => ({ ...f.posts[0], fromPlaylistId: f.url, fromCustomFeedUrl: f.url, fromPlaylist: f.title }))
+    .map(f => ({ ...f.posts[0], fromSource: f.url, fromPlaylist: f.title }))
 
   allPosts = [...apiPosts, ...customPosts].sort((a, b) => new Date(b.date) - new Date(a.date))
-
-  renderPlaylistStrip()
+  writeCache(allPosts)
   renderPosts()
 }
 
-document.getElementById('feed-playlist-strip').addEventListener('click', e => {
-  const remove = e.target.closest('.feed-custom-remove')
-  if (remove) {
-    e.stopPropagation()
-    const { id, type } = remove.dataset
-    if (type === 'playlist') removeFollow(id)
-    else if (type === 'source') toggleSourceFollow(id)
-    else removeCustomFeed(id)
-    if (activePlaylist === id) activePlaylist = null
-    load()
-    return
-  }
-  const chip = e.target.closest('.feed-playlist-chip')
-  if (!chip) return
-  const id = chip.dataset.id
-  activePlaylist = activePlaylist === id ? null : id
-  renderPlaylistStrip()
-  renderPosts()
-})
-
 document.getElementById('feed-posts').addEventListener('click', e => {
-  const removeBtn = e.target.closest('.feed-post-remove')
-  if (removeBtn) {
-    const url = removeBtn.dataset.removeUrl
-    if (hasSourceFollow(url)) removeSourceFollow(url)
-    if (hasCustomFeed(url)) removeCustomFeed(url)
-    load()
-    return
-  }
-
   const feedOpen = e.target.closest('.feed-open')
   if (!feedOpen) return
   const post = feedOpen.closest('.feed-post')
@@ -152,9 +117,25 @@ document.getElementById('btn-opml').addEventListener('click', async () => {
   const blob = await res.blob()
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
-  a.download = 'my-feed.opml'
+  a.download = 'feed.opml'
   a.click()
   URL.revokeObjectURL(a.href)
+})
+
+const opmlInput = document.getElementById('input-opml')
+document.getElementById('btn-import-opml').addEventListener('click', () => opmlInput.click())
+opmlInput.addEventListener('change', async () => {
+  const file = opmlInput.files[0]
+  if (!file) return
+  opmlInput.value = ''
+  const text = await file.text()
+  const doc = new DOMParser().parseFromString(text, 'text/xml')
+  const urls = [...doc.querySelectorAll('outline[xmlUrl]')].map(el => el.getAttribute('xmlUrl')).filter(Boolean)
+  let added = 0
+  for (const url of urls) {
+    if (!hasSourceFollow(url)) { toggleSourceFollow(url); added++ }
+  }
+  if (added) { clearCache(); load() }
 })
 
 document.getElementById('btn-clear-feed').addEventListener('click', () => {
@@ -163,7 +144,7 @@ document.getElementById('btn-clear-feed').addEventListener('click', () => {
   clearSourceFollows()
   clearCustomFeeds()
   clearFollowedPlaylists()
-  activePlaylist = null
+  clearCache()
   load()
 })
 
@@ -201,13 +182,13 @@ const addFeedByUrl = async () => {
     addStatus.className = 'feed-add-status ok'
     setTimeout(() => { addStatus.textContent = ''; addStatus.className = 'feed-add-status' }, 3000)
 
-    // silently suggest to discover
     fetch('/api/discover/submit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url })
     }).catch(() => {})
 
+    clearCache()
     load()
   } catch {
     addStatus.textContent = 'something went wrong'
@@ -221,7 +202,6 @@ const addFeedByUrl = async () => {
 addBtn.addEventListener('click', addFeedByUrl)
 addUrlInput.addEventListener('keydown', e => { if (e.key === 'Enter') addFeedByUrl() })
 
-// theme
 const themeBtn = document.getElementById('btn-theme')
 const updateThemeBtn = () => {
   themeBtn.textContent = document.documentElement.dataset.theme === 'light' ? '☽' : '☀'

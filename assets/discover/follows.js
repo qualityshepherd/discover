@@ -22,7 +22,7 @@ export const toggleFollow = (id) => { hasFollow(id) ? removeFollow(id) : addFoll
 export const followBtnHtml = (id, sources = []) => {
   const followed = sources.length ? hasFollowedPlaylist(id) : hasFollow(id)
   const sourcesAttr = sources.length ? ` data-sources="${sources.join('|')}"` : ''
-  return `<button class="btn btn-sm btn-follow${followed ? ' following' : ''}" data-follow-id="${id}"${sourcesAttr}>${followed ? 'in my feed' : '+ my feed'}</button>`
+  return `<button class="btn btn-sm btn-follow${followed ? ' following' : ''}" data-follow-id="${id}"${sourcesAttr}>${followed ? 'following' : '+ follow'}</button>`
 }
 
 export const rssCopyBtnHtml = (id) =>
@@ -41,7 +41,7 @@ export const syncFollowButtons = () => {
       ? hasFollowedPlaylist(btn.dataset.followId)
       : hasFollow(btn.dataset.followId)
     btn.classList.toggle('following', followed)
-    btn.textContent = followed ? 'in my feed' : '+ my feed'
+    btn.textContent = followed ? 'following' : '+ follow'
   })
 }
 
@@ -81,7 +81,7 @@ export const syncSourceFollowButtons = () => {
   document.querySelectorAll('.btn-source-follow[data-source-url]').forEach(btn => {
     const followed = hasSourceFollow(btn.dataset.sourceUrl)
     btn.classList.toggle('following', followed)
-    btn.textContent = followed ? 'in my feed' : '+ my feed'
+    btn.textContent = followed ? 'following' : '+ follow'
   })
 }
 
@@ -93,7 +93,7 @@ export const injectSourceFollowButtons = (container) => {
     const btn = document.createElement('button')
     btn.className = `btn btn-sm btn-source-follow${followed ? ' following' : ''}`
     btn.dataset.sourceUrl = feedUrl
-    btn.textContent = followed ? 'in my feed' : '+ my feed'
+    btn.textContent = followed ? 'following' : '+ follow'
     post.querySelector('.feed-meta')?.appendChild(btn)
   })
 }
@@ -126,6 +126,6 @@ export const initFollowHover = (root = document) => {
   })
   root.addEventListener('mouseout', e => {
     const btn = e.target.closest('.btn-follow.following')
-    if (btn) btn.textContent = 'in my feed'
+    if (btn) btn.textContent = 'following'
   })
 }

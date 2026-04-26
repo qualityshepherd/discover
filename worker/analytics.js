@@ -374,6 +374,31 @@ export async function trackHit (req, env) {
 
   if (path.length > 500) return
 
+  // Discover playlist RSS hit
+  const discoverRssMatch = path.match(/^\/api\/discover\/([^/]+)\/rss$/)
+  if (discoverRssMatch) {
+    const id = discoverRssMatch[1]
+    const parsed = parseRssSubscribers(ua)
+    const ipHash = await hashIp(ip)
+    let feedTitle = id
+    try {
+      const feed = await env.DISCOVER_KV.get(`feed:${id}`, { type: 'json' })
+      if (feed?.title) feedTitle = feed.title
+    } catch {}
+    try {
+      const stub = getSiteStub(req, env)
+      await stub.fetch('https://do.local/hit', {
+        method: 'POST',
+        body: JSON.stringify({
+          rss: { feed: feedTitle, subscribers: parsed?.subscribers || 0, aggregator: parsed?.aggregator || null },
+          ip: ipHash,
+          ts: Date.now()
+        })
+      })
+    } catch (err) { console.error('RSS analytics write failed:', err) }
+    return
+  }
+
   // RSS feed hit — intercept before classifyHit (which skips .xml extensions)
   if (path.startsWith('/assets/rss/') && path.endsWith('.xml')) {
     const feed = path.split('/').pop()

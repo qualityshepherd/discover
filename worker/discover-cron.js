@@ -66,7 +66,7 @@ export const fetchAndSaveSource = async (kv, url) => {
   const result = await fetchSource(url, 10)
   let posts = []; let siteUrl = null; let image = null
   if (result.posts) {
-    posts = result.posts.slice(0, 10).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
+    posts = result.posts.slice(0, 2).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
     siteUrl = result.siteUrl || null
     image = findImage(posts) || null
   }
@@ -189,7 +189,7 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
     const result = await fetchSource(url, 10)
 
     if (result.posts) {
-      const posts = result.posts.slice(0, 10).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
+      const posts = result.posts.slice(0, 2).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
       const latestPostUrl = posts[0]?.url || null
       const image = findImage(posts) || entry.image || null
       const changed = latestPostUrl !== entry.latestPostUrl || image !== entry.image
@@ -231,6 +231,15 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
 
   await buildLinkGraph(kv, sourceIndex, freshData).catch(err => console.error('buildLinkGraph failed:', err))
   await pruneCurators(kv).catch(err => console.error('pruneCurators failed:', err))
+
+  if (freshData.size) {
+    const sourceAll = await kv.get('source:all', { type: 'json' }) || {}
+    for (const [url, data] of freshData) {
+      sourceAll[makeId(url)] = { url: data.url, posts: data.posts, image: data.image, siteUrl: data.siteUrl }
+    }
+    await kv.put('source:all', JSON.stringify(sourceAll))
+  }
+
   await kv.put('cron:lastOk', new Date().toISOString())
 
   return { processed: due.length, skipped: allSourceUrls.length - due.length }

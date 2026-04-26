@@ -150,26 +150,32 @@ const handleOpml = async (kv, id) => {
 
 // GET /api/discover/feed?ids=... — merged posts from followed playlists
 const handleFeed = async (kv, url) => {
-  const ids = (url.searchParams.get('ids') || '').split(',').filter(Boolean).slice(0, 100)
-  const sourceUrls = (url.searchParams.get('sources') || '').split(',').filter(Boolean).slice(0, 100)
-  if (!ids.length && !sourceUrls.length) return cors(json({ posts: [], playlists: [] }))
+  const ids = (url.searchParams.get('ids') || '').split(',').filter(Boolean)
+  const sourceUrls = (url.searchParams.get('sources') || '').split(',').filter(Boolean)
+  if (!ids.length && !sourceUrls.length) return cors(json({ posts: [] }))
 
-  const [feeds, sourceDatas] = await Promise.all([
-    Promise.all(ids.map(id => getFeed(kv, id))),
-    Promise.all(sourceUrls.map(u => getSourceData(kv, u)))
-  ])
+  const feeds = (await Promise.all(ids.map(id => getFeed(kv, id)))).filter(Boolean)
+  const allSourceUrls = [...new Set([
+    ...feeds.flatMap(f => f.sources || []),
+    ...sourceUrls
+  ])]
 
-  const validFeeds = feeds.filter(Boolean)
-  const playlistPosts = validFeeds.flatMap(f =>
-    (f.previewPosts || []).map(p => ({ ...p, fromPlaylistId: f.id, fromPlaylist: f.title }))
-  )
-  const sourcePosts = sourceDatas.filter(Boolean).flatMap((s, i) =>
-    (s.posts || []).map(p => ({ ...p, fromSource: sourceUrls[i] }))
-  )
+  const sourceAll = await kv.get('source:all', { type: 'json' }) || {}
+  const missing = allSourceUrls.filter(u => !sourceAll[makeId(u)])
+  const fallbacks = missing.length
+    ? await Promise.all(missing.map(u => getSourceData(kv, u)))
+    : []
+  missing.forEach((u, i) => { if (fallbacks[i]) sourceAll[makeId(u)] = fallbacks[i] })
 
-  const posts = [...playlistPosts, ...sourcePosts].sort((a, b) => new Date(b.date) - new Date(a.date))
-  const playlists = validFeeds.map(f => ({ id: f.id, title: f.title }))
-  return cors(json({ posts, playlists }))
+  const seen = new Set()
+  const posts = allSourceUrls
+    .map(u => sourceAll[makeId(u)])
+    .filter(Boolean)
+    .flatMap(s => s.posts || [])
+    .filter(p => { if (!p.url || seen.has(p.url)) return false; seen.add(p.url); return true })
+    .sort((a, b) => new Date(b.date) - new Date(a.date))
+
+  return cors(json({ posts }))
 }
 
 // POST /api/discover/feed/opml — OPML of followed playlists' sources
@@ -180,7 +186,7 @@ const handleFeedOpml = async (kv, req) => {
   return new Response(toOpml(feeds), {
     headers: {
       'Content-Type': 'text/x-opml',
-      'Content-Disposition': 'attachment; filename="my-feed.opml"'
+      'Content-Disposition': 'attachment; filename="feed.opml"'
     }
   })
 }
@@ -229,7 +235,7 @@ const handleNew = async (kv) => {
   }))
   const results = fetched.filter(Boolean)
   results.sort((a, b) => new Date(b.sourceAddedAt) - new Date(a.sourceAddedAt))
-  return cors(json(results.slice(0, 20)))
+  return cors(json(results.slice(0, 42)))
 }
 
 // POST /api/discover/preview — fetch a feed URL server-side, return metadata; saves nothing
@@ -252,7 +258,7 @@ const handlePreview = async (req, kv) => {
     const feed = await getFeed(kv, rssMatch[1])
     if (!feed) return cors(json({ error: 'playlist not found' }, 422))
     const sourceDatas = await Promise.all((feed.sources || []).map(u => getSourceData(kv, u)))
-    const posts = sourceDatas.filter(Boolean).flatMap(s => s.posts || []).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 10).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
+    const posts = sourceDatas.filter(Boolean).flatMap(s => s.posts || []).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 2).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
     const image = sourceDatas.filter(Boolean).map(s => s.image).find(Boolean) || null
     return cors(json({ title: feed.title, image, posts, siteUrl: null }))
   }
@@ -262,7 +268,7 @@ const handlePreview = async (req, kv) => {
   if (!result.posts.length) return cors(json({ error: 'no posts found' }, 422))
   const title = result.posts[0]?.feed?.title || new URL(url).hostname
   const image = result.posts.reduce((img, p) => img || (p.content?.match(/<img[^>]+src=["']([^"']+)["']/i)?.[1]?.startsWith('http') ? p.content.match(/<img[^>]+src=["']([^"']+)["']/i)[1] : null), null)
-  const posts = result.posts.slice(0, 10).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
+  const posts = result.posts.slice(0, 2).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
   return cors(json({ title, image, posts, siteUrl: result.siteUrl || null }))
 }
 

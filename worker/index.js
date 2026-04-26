@@ -112,7 +112,10 @@ export default {
       return htmlRes(html.replace('<title>', inject + '\n  <title>'))
     }
 
-    // My Feed UI
+    // Linkable views
+    if (path === '/new' || path === '/random') return withSec(env.ASSETS.fetch(new Request(new URL('/discover/index.html', req.url))))
+
+    // Feed UI
     if (path === '/feed') return withSec(env.ASSETS.fetch(new Request(new URL('/feed/index.html', req.url))))
 
     // About UI

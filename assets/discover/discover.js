@@ -189,7 +189,7 @@ const loadPlaylist = async (id) => {
     followBtn.className = `btn btn-sm btn-follow${followed ? ' following' : ''}`
     followBtn.dataset.followId = id
     if (sources.length) followBtn.dataset.sources = sources.join('|')
-    followBtn.textContent = followed ? 'in my feed' : '+ my feed'
+    followBtn.textContent = followed ? 'following' : '+ follow'
   }
 
   const res = await fetch(`/api/discover/${id}`)
@@ -210,22 +210,59 @@ const showView = (name) => {
   document.getElementById('view-playlist').classList.toggle('hidden', name !== 'playlist')
 }
 
-const route = () => {
-  const parts = location.pathname.split('/').filter(Boolean)
-  if (parts.length === 2 && parts[0] === 'discover') {
-    loadPlaylist(parts[1])
-  } else {
-    loadBrowse()
-  }
+const ensureMentionCounts = async () => {
+  if (Object.keys(mentionCounts).length) return
+  const data = await fetch('/api/discover').then(r => r.json()).catch(() => ({}))
+  mentionCounts = data.mentionCounts || {}
 }
 
-// events
-
-document.getElementById('discover-search').addEventListener('input', () => filterAndRender())
-
-document.getElementById('btn-random').addEventListener('click', async () => {
+const loadNew = async () => {
+  showView('browse')
   const cards = document.getElementById('discover-cards')
   cards.innerHTML = '<p class="muted">loading…</p>'
+  document.getElementById('tag-cloud').innerHTML = ''
+  await ensureMentionCounts()
+  const posts = await fetch('/api/discover/new').then(r => r.json()).catch(() => [])
+  if (!posts.length) { cards.innerHTML = '<p class="muted">no new sources recently.</p>'; return }
+  const withLabel = posts.map(p => ({
+    ...p,
+    feed: { ...p.feed, title: p.feed?.title ? `${p.feed.title} · ${p.fromPlaylist}` : p.fromPlaylist }
+  }))
+  setFeedContext(withLabel)
+  initModal()
+
+  let rendered = 0
+  const PAGE = 20
+  const renderMore = () => {
+    const batch = withLabel.slice(rendered, rendered + PAGE)
+    if (!batch.length) return
+    const frag = document.createElement('div')
+    frag.innerHTML = batch.map(feedsItemTemplate).join('')
+    cards.appendChild(frag)
+    injectSourceFollowButtons(cards)
+    injectMentionsLinks(cards, mentionCounts)
+    rendered += batch.length
+  }
+
+  cards.innerHTML = ''
+  renderMore()
+
+  const sentinel = document.createElement('div')
+  cards.appendChild(sentinel)
+  const observer = new IntersectionObserver(entries => {
+    if (!entries[0].isIntersecting) return
+    if (rendered >= withLabel.length) { observer.disconnect(); sentinel.remove(); return }
+    renderMore()
+  }, { rootMargin: '200px' })
+  observer.observe(sentinel)
+}
+
+const loadRandom = async () => {
+  showView('browse')
+  const cards = document.getElementById('discover-cards')
+  cards.innerHTML = '<p class="muted">loading…</p>'
+  document.getElementById('tag-cloud').innerHTML = ''
+  await ensureMentionCounts()
   const posts = await fetch('/api/discover/random').then(r => r.json()).catch(() => [])
   const withPlaylist = posts.map(p => ({
     ...p,
@@ -235,25 +272,34 @@ document.getElementById('btn-random').addEventListener('click', async () => {
   if (withPlaylist.length) { injectSourceFollowButtons(cards); injectMentionsLinks(cards, mentionCounts) }
   setFeedContext(withPlaylist)
   initModal()
+}
+
+const route = () => {
+  const path = location.pathname
+  const parts = path.split('/').filter(Boolean)
+  if (parts.length === 2 && parts[0] === 'discover') {
+    loadPlaylist(parts[1])
+  } else if (path === '/new') {
+    loadNew()
+  } else if (path === '/random') {
+    loadRandom()
+  } else {
+    loadBrowse()
+  }
+}
+
+// events
+
+document.getElementById('discover-search').addEventListener('input', () => filterAndRender())
+
+document.getElementById('btn-random').addEventListener('click', () => {
+  history.pushState({}, '', '/random')
+  loadRandom()
 })
 
-document.getElementById('btn-new').addEventListener('click', async () => {
-  const cards = document.getElementById('discover-cards')
-  cards.innerHTML = '<p class="muted">loading…</p>'
-  const posts = await fetch('/api/discover/new').then(r => r.json()).catch(() => [])
-  if (!posts.length) {
-    cards.innerHTML = '<p class="muted">no new sources recently.</p>'
-    return
-  }
-  const withLabel = posts.map(p => ({
-    ...p,
-    feed: { ...p.feed, title: p.feed?.title ? `${p.feed.title} · ${p.fromPlaylist}` : p.fromPlaylist }
-  }))
-  cards.innerHTML = withLabel.map(feedsItemTemplate).join('')
-  injectSourceFollowButtons(cards)
-  injectMentionsLinks(cards, mentionCounts)
-  setFeedContext(withLabel)
-  initModal()
+document.getElementById('btn-new').addEventListener('click', () => {
+  history.pushState({}, '', '/new')
+  loadNew()
 })
 
 document.getElementById('tag-cloud').addEventListener('click', e => {

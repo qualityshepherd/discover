@@ -1,7 +1,7 @@
 import { parseFeed } from './feedParser.js'
 import {
   makeId, getFeeds, getSourceIndex, getSourceData, saveSourceData, saveFeeds,
-  KV_SOURCE_INDEX,
+  KV_SOURCE_INDEX, getBlocked,
   listCurators, deleteCurator, isCuratorInactive
 } from './discover-kv.js'
 
@@ -241,6 +241,18 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
   }
 
   await kv.put('cron:lastOk', new Date().toISOString())
+
+  if (env.R2) {
+    const today = new Date().toISOString().slice(0, 10)
+    const key = `backup/discover-${today}.json`
+    const existing = await env.R2.head(key).catch(() => null)
+    if (!existing) {
+      const [feeds, blocked] = await Promise.all([getFeeds(kv), getBlocked(kv)])
+      await env.R2.put(key, JSON.stringify({ date: today, feeds: feeds || [], blocked: blocked || [] }), {
+        httpMetadata: { contentType: 'application/json' }
+      })
+    }
+  }
 
   return { processed: due.length, skipped: allSourceUrls.length - due.length }
 }

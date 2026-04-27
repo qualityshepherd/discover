@@ -1,5 +1,5 @@
 import { trackHit, handleAnalytics, AnalyticsDO } from './analytics.js'
-import { handleDiscover, handleMentionsFeed, checkDiscoverFeeds } from './discover.js'
+import { handleDiscover, handleMentionsFeed, checkDiscoverFeeds, handleUserFeed, handlePersonalRss } from './discover.js'
 import { handleAuth, memberByToken, isOwnerPubkey } from './auth.js'
 import { json } from './utils.js'
 
@@ -114,6 +114,13 @@ export default {
 
     // Linkable views
     if (path === '/new' || path === '/random') return withSec(env.ASSETS.fetch(new Request(new URL('/discover/index.html', req.url))))
+
+    // Personal RSS feed — must be before asset fallthrough (path has a dot)
+    const feedRssMatch = path.match(/^\/feed\/([^/]+)\.xml$/)
+    if (feedRssMatch) return handlePersonalRss(req, env, feedRssMatch[1])
+
+    // User feed API
+    if (path.startsWith('/api/feed')) return handleUserFeed(req, env)
 
     // Feed UI
     if (path === '/feed') return withSec(env.ASSETS.fetch(new Request(new URL('/feed/index.html', req.url))))

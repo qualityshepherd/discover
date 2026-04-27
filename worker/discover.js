@@ -8,7 +8,8 @@ import {
   getPending, getBlocked, isBlocked,
   KV_PREFIX, KV_PENDING, KV_BLOCKED,
   getCurator, saveCurator, deleteCurator, listCurators, addToCuratorIndex,
-  isCuratorOf, shouldUpdateLastSeen
+  isCuratorOf, shouldUpdateLastSeen,
+  getUserFeedSlug, setUserFeedSlug, getUserFeed, setUserFeed
 } from './discover-kv.js'
 import { checkDiscoverFeeds, computeFrequency, fetchAndSaveSource, applySourceDatas, fetchSource, buildLinkGraph } from './discover-cron.js'
 
@@ -148,10 +149,11 @@ const handleOpml = async (kv, id) => {
   })
 }
 
-// GET /api/discover/feed?ids=... — merged posts from followed playlists
-const handleFeed = async (kv, url) => {
-  const ids = (url.searchParams.get('ids') || '').split(',').filter(Boolean)
-  const sourceUrls = (url.searchParams.get('sources') || '').split(',').filter(Boolean)
+// POST /api/discover/feed — merged posts from followed playlists
+const handleFeed = async (kv, req) => {
+  const body = await parseJsonBody(req)
+  const ids = Array.isArray(body?.ids) ? body.ids.filter(Boolean) : []
+  const sourceUrls = Array.isArray(body?.sources) ? body.sources.filter(Boolean) : []
   if (!ids.length && !sourceUrls.length) return cors(json({ posts: [] }))
 
   const feeds = (await Promise.all(ids.map(id => getFeed(kv, id)))).filter(Boolean)
@@ -161,11 +163,38 @@ const handleFeed = async (kv, url) => {
   ])]
 
   const sourceAll = await kv.get('source:all', { type: 'json' }) || {}
+
+  // KV fallback for playlist sources with individual keys not yet in source:all
   const missing = allSourceUrls.filter(u => !sourceAll[makeId(u)])
   const fallbacks = missing.length
     ? await Promise.all(missing.map(u => getSourceData(kv, u)))
     : []
   missing.forEach((u, i) => { if (fallbacks[i]) sourceAll[makeId(u)] = fallbacks[i] })
+
+  // Live-fetch sources still missing (custom OPML feeds not in any playlist — never written to KV)
+  const stillMissing = missing.filter(u => !sourceAll[makeId(u)])
+  if (stillMissing.length) {
+    const results = await Promise.all(stillMissing.map(async (url) => {
+      const result = await fetchSource(url, 2)
+      if (!result.posts?.length) return null
+      const posts = result.posts.slice(0, 2).map(p => ({
+        title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content
+      }))
+      const image = result.posts.reduce((img, p) => {
+        if (img) return img
+        const m = (p.content || '').match(/<img[^>]+src=["']([^"']+)["']/i)
+        return m?.[1]?.startsWith('http') ? m[1] : null
+      }, null)
+      return { url, posts, image: image || null, siteUrl: result.siteUrl || null }
+    }))
+    let cacheUpdated = false
+    results.forEach((data, i) => {
+      if (!data) return
+      sourceAll[makeId(stillMissing[i])] = data
+      cacheUpdated = true
+    })
+    if (cacheUpdated) await kv.put('source:all', JSON.stringify(sourceAll))
+  }
 
   const seen = new Set()
   const posts = allSourceUrls
@@ -250,9 +279,15 @@ const handlePreview = async (req, kv) => {
   if (!url) return json({ error: 'url required' }, 400)
   if (!URL.canParse(url)) return json({ error: 'invalid url' }, 400)
 
-  // Same-host playlist RSS — serve from KV directly to avoid self-request loop
+  // Same-host feeds — serve from KV directly to avoid self-request loop
   const parsed = new URL(url)
   if (parsed.host === host) {
+    const mentionsMatch = parsed.pathname.match(/^\/api\/mentions\/([^/]+)\.xml$/)
+    if (mentionsMatch) {
+      const mentions = await kv.get(`mentions:${mentionsMatch[1]}`, { type: 'json' }) || []
+      const posts = mentions.slice(0, 2).map(m => ({ title: m.fromTitle || m.fromPost, url: m.fromPost, date: m.fromDate, feed: { title: `mentions · ${mentionsMatch[1]}` } }))
+      return cors(json({ title: `mentions · ${mentionsMatch[1]}`, image: null, posts, siteUrl: null }))
+    }
     const rssMatch = parsed.pathname.match(/^\/api\/discover\/([^/]+)\/rss$/)
     if (!rssMatch) return cors(json({ error: 'use the follow button on the discover page instead' }, 422))
     const feed = await getFeed(kv, rssMatch[1])
@@ -759,7 +794,7 @@ export const handleDiscover = async (req, env) => {
 
   // Public routes — no auth
   if (method === 'GET' && path === '/api/discover') return handleList(kv, url)
-  if (method === 'GET' && path === '/api/discover/feed') return handleFeed(kv, url)
+  if (method === 'POST' && path === '/api/discover/feed') return handleFeed(kv, req)
   if (method === 'POST' && path === '/api/discover/feed/opml') return handleFeedOpml(kv, req)
   if (method === 'GET' && path === '/api/discover/all/opml') return handleAllOpml(kv)
   if (method === 'GET' && path === '/api/discover/random') return handleRandom(kv, url)
@@ -897,5 +932,136 @@ export const handleDiscover = async (req, env) => {
   const curatorPubkeyMatch = path.match(/^\/api\/discover\/admin\/curator\/([^/]+)$/)
   if (curatorPubkeyMatch && method === 'DELETE') return handleCuratorRevoke(kv, curatorPubkeyMatch[1])
 
+  // Backup download
+  if (method === 'GET' && path === '/api/discover/admin/backup') {
+    const [feeds, blocked] = await Promise.all([getFeeds(kv), getBlocked(kv)])
+    const date = new Date().toISOString().slice(0, 10)
+    return new Response(JSON.stringify({ date, feeds: feeds || [], blocked: blocked || [] }, null, 2), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Disposition': `attachment; filename="discover-backup-${date}.json"`
+      }
+    })
+  }
+
   return json({ error: 'not found' }, 404)
+}
+
+// Personal feed slug — admin GET/PUT + user feed PUT
+export const handleUserFeed = async (req, env) => {
+  const kv = env.DISCOVER_KV
+  const path = new URL(req.url).pathname
+  const method = req.method
+
+  const authed = async () => {
+    const token = req.headers?.get('authorization')?.replace('Bearer ', '')
+    const pubkey = await memberByToken(token, kv)
+    return isOwnerPubkey(pubkey, env)
+  }
+
+  if (path === '/api/feed/admin/slug') {
+    if (!await authed()) return json({ error: 'unauthorized' }, 401)
+    if (method === 'GET') {
+      const slug = await getUserFeedSlug(kv)
+      return json({ slug: slug || null })
+    }
+    if (method === 'PUT') {
+      const body = await parseJsonBody(req)
+      const slug = String(body?.slug || '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 40)
+      if (!slug) return json({ error: 'invalid slug' }, 400)
+      await setUserFeedSlug(kv, slug)
+      return json({ ok: true, slug })
+    }
+  }
+
+  const slugMatch = path.match(/^\/api\/feed\/([^/]+)$/)
+  if (slugMatch && method === 'PUT') {
+    if (!await authed()) return json({ error: 'unauthorized' }, 401)
+    const body = await parseJsonBody(req)
+    if (!body) return json({ error: 'invalid json' }, 400)
+    const { ids = [], sources = [], customFeeds = [] } = body
+    await setUserFeed(kv, slugMatch[1], { ids, sources, customFeeds })
+    return json({ ok: true })
+  }
+
+  return json({ error: 'not found' }, 404)
+}
+
+// Personal RSS feed — public, built from stored follows
+export const handlePersonalRss = async (req, env, slug) => {
+  const kv = env.DISCOVER_KV
+  const data = await getUserFeed(kv, slug)
+  if (!data) return new Response('Not found', { status: 404 })
+
+  const { ids = [], sources: sourcesParam = [] } = data
+  const feeds = (await Promise.all(ids.map(id => getFeed(kv, id)))).filter(Boolean)
+  const allSourceUrls = [...new Set([...feeds.flatMap(f => f.sources || []), ...sourcesParam])]
+
+  const sourceAll = await kv.get('source:all', { type: 'json' }) || {}
+  const missing = allSourceUrls.filter(u => !sourceAll[makeId(u)])
+  if (missing.length) {
+    const fallbacks = await Promise.all(missing.map(u => getSourceData(kv, u)))
+    missing.forEach((u, i) => { if (fallbacks[i]) sourceAll[makeId(u)] = fallbacks[i] })
+  }
+
+  const stillMissing = missing.filter(u => !sourceAll[makeId(u)])
+  if (stillMissing.length) {
+    const results = await Promise.all(stillMissing.map(async (url) => {
+      const result = await fetchSource(url, 2)
+      if (!result.posts?.length) return null
+      const posts = result.posts.slice(0, 2).map(p => ({
+        title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content
+      }))
+      const image = result.posts.reduce((img, p) => {
+        if (img) return img
+        const m = (p.content || '').match(/<img[^>]+src=["']([^"']+)["']/i)
+        return m?.[1]?.startsWith('http') ? m[1] : null
+      }, null)
+      return { url, posts, image: image || null, siteUrl: result.siteUrl || null }
+    }))
+    let cacheUpdated = false
+    results.forEach((data, i) => {
+      if (!data) return
+      sourceAll[makeId(stillMissing[i])] = data
+      cacheUpdated = true
+    })
+    if (cacheUpdated) await kv.put('source:all', JSON.stringify(sourceAll))
+  }
+
+  const seen = new Set()
+  const posts = allSourceUrls
+    .map(u => sourceAll[makeId(u)])
+    .filter(Boolean)
+    .flatMap(s => s.posts || [])
+    .filter(p => { if (!p.url || seen.has(p.url)) return false; seen.add(p.url); return true })
+    .sort((a, b) => new Date(b.date) - new Date(a.date))
+
+  const base = new URL(req.url).origin
+  const items = posts.map(p => `
+    <item>
+      <title>${xmlAttr(p.title)}</title>
+      <link>${xmlAttr(p.url)}</link>
+      <guid>${xmlAttr(p.url)}</guid>
+      ${p.date ? `<pubDate>${new Date(p.date).toUTCString()}</pubDate>` : ''}
+      ${p.author || p.feed?.title ? `<author>${xmlAttr(p.author || p.feed?.title)}</author>` : ''}
+      ${p.feed?.title ? `<source url="${xmlAttr(p.feed?.url || '')}">${xmlAttr(p.feed.title)}</source>` : ''}
+      ${p.content ? `<description><![CDATA[${p.content}]]></description>` : ''}
+    </item>`).join('')
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>${xmlAttr(slug)}'s feed · discover</title>
+    <description>Personal RSS feed from discover</description>
+    <link>${base}/feed</link>
+    ${items}
+  </channel>
+</rss>`
+
+  return new Response(xml, {
+    headers: {
+      'Content-Type': 'application/rss+xml; charset=utf-8',
+      'Cache-Control': 'public, max-age=900'
+    }
+  })
 }

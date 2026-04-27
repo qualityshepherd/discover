@@ -58,10 +58,39 @@ async function showAnalytics () {
   await renderAnalytics()
 }
 
+const showSlugLink = (slug) => {
+  const el = $('slug-link')
+  if (!slug) { el.classList.add('hidden'); return }
+  const url = `${location.origin}/feed/${slug}.xml`
+  el.innerHTML = `rss: <a href="${url}" target="_blank" rel="noopener">${url}</a>`
+  el.classList.remove('hidden')
+}
+
 async function showSettings () {
   if (!getToken()) return showLogin()
   showView('view-settings'); showNav()
+  const data = await api('GET', '/api/feed/admin/slug')
+  if (data?.slug) {
+    $('slug-input').value = data.slug
+    showSlugLink(data.slug)
+  }
 }
+
+$('btn-slug-save').addEventListener('click', async () => {
+  const raw = $('slug-input').value.trim()
+  const slug = raw.toLowerCase().replace(/[^a-z0-9-]/g, '')
+  if (!slug) { $('slug-status').textContent = 'invalid slug'; return }
+  const res = await api('PUT', '/api/feed/admin/slug', { slug })
+  if (res?.ok) {
+    $('slug-input').value = res.slug
+    localStorage.setItem('discover_slug', res.slug)
+    $('slug-status').textContent = 'saved'
+    showSlugLink(res.slug)
+    setTimeout(() => { $('slug-status').textContent = '' }, 2000)
+  } else {
+    $('slug-status').textContent = res?.error || 'save failed'
+  }
+})
 
 // ── auth ──────────────────────────────────────────────────────────────────────
 const login = async (passphrase) => {
@@ -103,6 +132,23 @@ $('btn-login').addEventListener('click', async () => {
   const passphrase = $('login-passphrase').value.trim()
   if (!passphrase) return
   try { await login(passphrase); location.hash = '#discover' } catch (e) { showError('login-error', e.message) }
+})
+
+$('btn-backup').addEventListener('click', async () => {
+  const status = $('backup-status')
+  status.textContent = 'downloading…'
+  try {
+    const res = await fetch('/api/discover/admin/backup', { headers: { Authorization: `Bearer ${getToken()}` } })
+    if (!res.ok) { status.textContent = 'failed'; return }
+    const blob = await res.blob()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `discover-backup-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(a.href)
+    status.textContent = 'done'
+    setTimeout(() => { status.textContent = '' }, 3000)
+  } catch { status.textContent = 'something went wrong' }
 })
 
 $('btn-logout').addEventListener('click', () => {

@@ -1,5 +1,12 @@
 // KV key constants
 
+export const KV_USER_FEED_SLUG = 'user-feed:slug'
+
+export const getUserFeedSlug = (kv) => kv.get(KV_USER_FEED_SLUG)
+export const setUserFeedSlug = (kv, slug) => kv.put(KV_USER_FEED_SLUG, slug)
+export const getUserFeed = (kv, slug) => kv.get(`user-feed:${slug}`, { type: 'json' })
+export const setUserFeed = (kv, slug, data) => kv.put(`user-feed:${slug}`, JSON.stringify(data))
+
 export const KV_INDEX = 'discover:index' // ordered list of feed IDs
 export const KV_PREFIX = 'discover:feed:' // one entry per mix
 export const KV_FEEDS_LIST = 'discover:feeds-list' // all feeds as single JSON blob (1-read cache)

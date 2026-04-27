@@ -81,6 +81,19 @@
   <!-- settings -->
   <div id="view-settings" class="hidden">
     <h2 class="view-title field">settings</h2>
+    <div class="field">
+      <label for="slug-input">personal feed slug</label>
+      <div class="flex gap-sm">
+        <input type="text" id="slug-input" placeholder="e.g. brine" maxlength="40" autocomplete="off" spellcheck="false">
+        <button class="btn btn-sm" id="btn-slug-save">save</button>
+      </div>
+      <p class="muted" id="slug-status"></p>
+      <p id="slug-link" class="hidden muted"></p>
+    </div>
+    <div class="field">
+      <button class="btn btn-sm" id="btn-backup">download backup</button>
+      <p class="muted" id="backup-status"></p>
+    </div>
     <div class="mt-8">
       <button class="btn btn-danger" id="btn-logout">logout</button>
     </div>

@@ -76,10 +76,11 @@ const load = async () => {
 
   let apiPosts = []
   if (follows.length || sourceFollows.length) {
-    const params = new URLSearchParams()
-    if (follows.length) params.set('ids', follows.join(','))
-    if (sourceFollows.length) params.set('sources', sourceFollows.join(','))
-    const res = await fetch(`/api/discover/feed?${params}`)
+    const res = await fetch('/api/discover/feed', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: follows, sources: sourceFollows })
+    })
     if (res.ok) {
       const data = await res.json()
       apiPosts = data.posts || []
@@ -88,7 +89,7 @@ const load = async () => {
 
   const customPosts = customFeeds
     .filter(f => f.posts?.length)
-    .map(f => ({ ...f.posts[0], fromSource: f.url, fromPlaylist: f.title }))
+    .flatMap(f => f.posts.map(p => ({ ...p, fromSource: f.url, fromPlaylist: f.title })))
 
   allPosts = [...apiPosts, ...customPosts].sort((a, b) => new Date(b.date) - new Date(a.date))
   writeCache(allPosts)
@@ -201,6 +202,48 @@ const addFeedByUrl = async () => {
 
 addBtn.addEventListener('click', addFeedByUrl)
 addUrlInput.addEventListener('keydown', e => { if (e.key === 'Enter') addFeedByUrl() })
+
+// publish feed (only shown when slug is set)
+const slug = localStorage.getItem('discover_slug')
+const publishBtn = document.getElementById('btn-publish-feed')
+const publishStatus = document.getElementById('publish-status')
+const publishLink = document.getElementById('publish-link')
+
+if (slug) {
+  publishBtn.classList.remove('hidden')
+  publishLink.href = `${location.origin}/feed/${slug}.xml`
+  publishLink.classList.remove('hidden')
+}
+
+publishBtn.addEventListener('click', async () => {
+  const token = localStorage.getItem('discover_token')
+  if (!token || !slug) return
+  publishBtn.disabled = true
+  publishBtn.textContent = '…'
+  publishStatus.textContent = ''
+  publishStatus.className = 'feed-add-status'
+  try {
+    const res = await fetch(`/api/feed/${slug}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ ids: getFollows(), sources: getSourceFollows(), customFeeds: getCustomFeeds() })
+    })
+    if (res.ok) {
+      publishStatus.textContent = 'published'
+      publishStatus.className = 'feed-add-status ok'
+      setTimeout(() => { publishStatus.textContent = ''; publishStatus.className = 'feed-add-status' }, 3000)
+    } else {
+      publishStatus.textContent = 'publish failed'
+      publishStatus.className = 'feed-add-status error'
+    }
+  } catch {
+    publishStatus.textContent = 'something went wrong'
+    publishStatus.className = 'feed-add-status error'
+  } finally {
+    publishBtn.disabled = false
+    publishBtn.textContent = 'publish'
+  }
+})
 
 const themeBtn = document.getElementById('btn-theme')
 const updateThemeBtn = () => {

@@ -94,9 +94,9 @@ test('computeFrequency: no posts returns null', t => {
   t.is(computeFrequency(null), null)
 })
 
-test('computeFrequency: all posts older than 90 days returns null', t => {
+test('computeFrequency: all posts older than 90 days returns inactive', t => {
   const posts = Array.from({ length: 5 }, () => ({ date: daysAgo(100) }))
-  t.is(computeFrequency(posts), null)
+  t.is(computeFrequency(posts), 'inactive')
 })
 
 test('computeFrequency: 20+ posts in 90 days returns daily', t => {
@@ -114,9 +114,9 @@ test('computeFrequency: 2-7 posts in 90 days returns monthly', t => {
   t.is(computeFrequency(posts), 'monthly')
 })
 
-test('computeFrequency: 1 post in 90 days returns null', t => {
+test('computeFrequency: 1 post in 90 days returns inactive', t => {
   const posts = [{ date: daysAgo(15) }]
-  t.is(computeFrequency(posts), null)
+  t.is(computeFrequency(posts), 'inactive')
 })
 
 test('computeFrequency: posts with no date are ignored', t => {

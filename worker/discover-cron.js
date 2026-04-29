@@ -7,8 +7,15 @@ import {
 
 const VIDEO_DOMAINS = new Set(['youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv', 'rumble.com'])
 
-const STALE_MS = 4 * 60 * 60 * 1000
-const MAX_FETCHES_PER_RUN = 10
+const MAX_FETCHES_PER_RUN = 20
+
+const staleMsFor = (freq) => {
+  if (freq === 'daily') return 8 * 60 * 60 * 1000
+  if (freq === 'weekly') return 12 * 60 * 60 * 1000
+  if (freq === 'monthly') return 24 * 60 * 60 * 1000
+  if (freq === 'inactive') return 48 * 60 * 60 * 1000
+  return 12 * 60 * 60 * 1000 // unknown — treat as weekly until frequency is established
+}
 
 // Extract the human site URL from RSS/Atom XML (not the feed URL itself)
 const parseSiteUrl = (xml) => {
@@ -41,11 +48,11 @@ export const computeFrequency = (posts) => {
   const now = Date.now()
   const cutoff90 = now - 90 * 24 * 60 * 60 * 1000
   const recent = posts.filter(p => p.date && new Date(p.date).getTime() > cutoff90)
-  if (!recent.length) return null
+  if (!recent.length) return 'inactive'
   if (recent.length >= 20) return 'daily'
   if (recent.length >= 8) return 'weekly'
   if (recent.length >= 2) return 'monthly'
-  return null
+  return 'inactive'
 }
 
 const findImage = (posts) => {
@@ -64,14 +71,15 @@ const findImage = (posts) => {
 export const fetchAndSaveSource = async (kv, url) => {
   const now = Date.now()
   const result = await fetchSource(url, 10)
-  let posts = []; let siteUrl = null; let image = null
+  let posts = []; let siteUrl = null; let image = null; let frequency = null
   if (result.posts) {
-    posts = result.posts.slice(0, 2).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
+    frequency = computeFrequency(result.posts)
+    image = findImage(result.posts) || null
+    posts = result.posts.slice(0, 3).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
     siteUrl = result.siteUrl || null
-    image = findImage(posts) || null
   }
   const sourceData = { url, siteUrl, posts, image, statusCode: result.statusCode ?? null, error: result.error || null, lastFetched: new Date(now).toISOString() }
-  const indexEntry = { url, lastFetched: sourceData.lastFetched, statusCode: sourceData.statusCode, error: sourceData.error, hasPosts: posts.length > 0, latestPostUrl: posts[0]?.url || null, image: sourceData.image, addedAt: new Date(now).toISOString() }
+  const indexEntry = { url, lastFetched: sourceData.lastFetched, statusCode: sourceData.statusCode, error: sourceData.error, hasPosts: posts.length > 0, latestPostUrl: posts[0]?.url || null, image: sourceData.image, frequency: frequency || null, addedAt: new Date(now).toISOString() }
   await saveSourceData(kv, url, sourceData)
   return { sourceData, indexEntry }
 }
@@ -176,8 +184,12 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
   const allSourceUrls = [...new Set(allFeeds.flatMap(f => f.sources || []))]
 
   const due = allSourceUrls
-    .map(url => ({ url, t: sourceIndex[makeId(url)]?.lastFetched ? new Date(sourceIndex[makeId(url)].lastFetched).getTime() : 0 }))
-    .filter(({ t }) => force || now - t >= STALE_MS)
+    .map(url => {
+      const entry = sourceIndex[makeId(url)] || {}
+      const t = entry.lastFetched ? new Date(entry.lastFetched).getTime() : 0
+      return { url, t, staleMs: staleMsFor(entry.frequency) }
+    })
+    .filter(({ t, staleMs }) => force || now - t >= staleMs)
     .sort((a, b) => a.t - b.t)
     .slice(0, MAX_FETCHES_PER_RUN)
 
@@ -189,17 +201,18 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
     const result = await fetchSource(url, 10)
 
     if (result.posts) {
-      const posts = result.posts.slice(0, 2).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
+      const frequency = computeFrequency(result.posts)
+      const image = findImage(result.posts) || entry.image || null
+      const posts = result.posts.slice(0, 3).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
       const latestPostUrl = posts[0]?.url || null
-      const image = findImage(posts) || entry.image || null
       const changed = latestPostUrl !== entry.latestPostUrl || image !== entry.image
 
+      const data = { url, siteUrl: result.siteUrl || null, posts, image, statusCode: result.statusCode, error: null, lastFetched: new Date(now).toISOString() }
       if (changed) {
-        const data = { url, siteUrl: result.siteUrl || null, posts, image, statusCode: result.statusCode, error: null, lastFetched: new Date(now).toISOString() }
         await saveSourceData(kv, url, data)
         freshData.set(url, data)
       }
-      sourceIndex[hash] = { ...entry, url, lastFetched: new Date(now).toISOString(), statusCode: result.statusCode, error: null, hasPosts: posts.length > 0, latestPostUrl, image, addedAt: entry.addedAt || new Date(now).toISOString() }
+      sourceIndex[hash] = { ...entry, url, lastFetched: new Date(now).toISOString(), statusCode: result.statusCode, error: null, hasPosts: posts.length > 0, latestPostUrl, image, frequency: frequency || entry.frequency || null, addedAt: entry.addedAt || new Date(now).toISOString() }
     } else {
       // fetch failed — update index only, leave sourceData untouched
       sourceIndex[hash] = { ...entry, url, lastFetched: new Date(now).toISOString(), statusCode: result.statusCode ?? 0, error: result.error || null, addedAt: entry.addedAt || new Date(now).toISOString() }

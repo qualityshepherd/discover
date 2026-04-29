@@ -223,7 +223,7 @@ const loadNew = async () => {
   document.getElementById('tag-cloud').innerHTML = ''
   await ensureMentionCounts()
   const posts = await fetch('/api/discover/new').then(r => r.json()).catch(() => [])
-  if (!posts.length) { cards.innerHTML = '<p class="muted">no new sources recently.</p>'; return }
+  if (!posts.length) { cards.innerHTML = '<p class="muted">no new posts yet.</p>'; return }
   const withLabel = posts.map(p => ({
     ...p,
     feed: { ...p.feed, title: p.feed?.title ? `${p.feed.title} · ${p.fromPlaylist}` : p.fromPlaylist }

@@ -175,9 +175,9 @@ const handleFeed = async (kv, req) => {
   const stillMissing = missing.filter(u => !sourceAll[makeId(u)])
   if (stillMissing.length) {
     const results = await Promise.all(stillMissing.map(async (url) => {
-      const result = await fetchSource(url, 2)
+      const result = await fetchSource(url, 3)
       if (!result.posts?.length) return null
-      const posts = result.posts.slice(0, 2).map(p => ({
+      const posts = result.posts.slice(0, 3).map(p => ({
         title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content
       }))
       const image = result.posts.reduce((img, p) => {
@@ -245,26 +245,25 @@ const handleRandom = async (kv, url) => {
   return cors(json(deduped.slice(0, n)))
 }
 
-// GET /api/discover/new — recently added sources, one post each
+// GET /api/discover/new — newest posts across all sources, one per source sorted by date
 const handleNew = async (kv) => {
-  const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000
-  const [feeds, sourceIndex] = await Promise.all([getFeeds(kv) || [], getSourceIndex(kv)])
-  const newEntries = Object.values(sourceIndex).filter(s => s.addedAt && new Date(s.addedAt).getTime() > cutoff)
-  const fetched = await Promise.all(newEntries.map(async entry => {
-    const data = await getSourceData(kv, entry.url)
-    if (!data?.posts?.length) return null
-    const playlist = feeds.find(f => (f.sources || []).includes(entry.url))
-    return {
-      ...data.posts[0],
-      isNew: true,
-      fromPlaylist: playlist?.title || new URL(entry.url).hostname,
-      fromPlaylistId: playlist?.id || null,
-      sourceAddedAt: entry.addedAt
-    }
-  }))
-  const results = fetched.filter(Boolean)
-  results.sort((a, b) => new Date(b.sourceAddedAt) - new Date(a.sourceAddedAt))
-  return cors(json(results.slice(0, 42)))
+  const [feeds, sourceAll] = await Promise.all([getFeeds(kv) || [], kv.get('source:all', { type: 'json' })])
+  const allSourceUrls = [...new Set((feeds).flatMap(f => f.sources || []))]
+  const src = sourceAll || {}
+  const posts = allSourceUrls
+    .map(url => {
+      const data = src[makeId(url)]
+      if (!data?.posts?.length) return null
+      const playlist = feeds.find(f => (f.sources || []).includes(url))
+      return {
+        ...data.posts[0],
+        fromPlaylist: playlist?.title || new URL(url).hostname,
+        fromPlaylistId: playlist?.id || null
+      }
+    })
+    .filter(p => p?.date)
+    .sort((a, b) => new Date(b.date) - new Date(a.date))
+  return cors(json(posts))
 }
 
 // POST /api/discover/preview — fetch a feed URL server-side, return metadata; saves nothing
@@ -1007,9 +1006,9 @@ export const handlePersonalRss = async (req, env, slug) => {
   const stillMissing = missing.filter(u => !sourceAll[makeId(u)])
   if (stillMissing.length) {
     const results = await Promise.all(stillMissing.map(async (url) => {
-      const result = await fetchSource(url, 2)
+      const result = await fetchSource(url, 3)
       if (!result.posts?.length) return null
-      const posts = result.posts.slice(0, 2).map(p => ({
+      const posts = result.posts.slice(0, 3).map(p => ({
         title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content
       }))
       const image = result.posts.reduce((img, p) => {

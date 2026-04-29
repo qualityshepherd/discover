@@ -368,12 +368,16 @@ export const classifyHit = (path, ua = '', asn = null) => {
 export async function trackHit (req, env) {
   const url = new URL(req.url)
   const path = url.searchParams.get('path') || (url.pathname + (url.search || ''))
-  const ip = req.headers.get('cf-connecting-ip') || ''
+  const ip = req.cf?.clientIp ||
+    req.headers.get('cf-connecting-ip') ||
+    req.headers.get('x-forwarded-for')?.split(',')[0].trim() ||
+    null
   const ua = req.headers.get('user-agent') || ''
   const asn = req.cf?.asn ?? null
 
   if (path.length > 500) return
   if (req.headers.get('cookie')?.includes('discover_skip=1')) return
+  if (!ip) return
 
   // Personal feed RSS hit
   const personalRssMatch = path.match(/^\/feed\/([^/]+)\.xml$/)
@@ -386,6 +390,25 @@ export async function trackHit (req, env) {
         method: 'POST',
         body: JSON.stringify({
           rss: { feed: personalRssMatch[1], subscribers: parsed?.subscribers || 0, aggregator: parsed?.aggregator || null },
+          ip: ipHash,
+          ts: Date.now()
+        })
+      })
+    } catch (err) { console.error('RSS analytics write failed:', err) }
+    return
+  }
+
+  // Mentions feed hit
+  const mentionsMatch = path.match(/^\/api\/mentions\/([^/]+)\.xml$/)
+  if (mentionsMatch) {
+    const parsed = parseRssSubscribers(ua)
+    const ipHash = await hashIp(ip)
+    try {
+      const stub = getSiteStub(req, env)
+      await stub.fetch('https://do.local/hit', {
+        method: 'POST',
+        body: JSON.stringify({
+          rss: { feed: `mentions:${mentionsMatch[1]}`, subscribers: parsed?.subscribers || 0, aggregator: parsed?.aggregator || null },
           ip: ipHash,
           ts: Date.now()
         })

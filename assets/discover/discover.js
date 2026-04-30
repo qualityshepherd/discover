@@ -233,22 +233,25 @@ const loadNew = async () => {
 
   let rendered = 0
   const PAGE = 20
+
+  cards.innerHTML = ''
+  // sentinel sits at the bottom; items are inserted before it so it stays at
+  // the end. IntersectionObserver fires when it enters the viewport to load the next batch.
+  const sentinel = document.createElement('div')
+  cards.appendChild(sentinel)
+
   const renderMore = () => {
     const batch = withLabel.slice(rendered, rendered + PAGE)
     if (!batch.length) return
     const frag = document.createElement('div')
     frag.innerHTML = batch.map(feedsItemTemplate).join('')
-    cards.appendChild(frag)
+    cards.insertBefore(frag, sentinel)
     injectSourceFollowButtons(cards)
     injectMentionsLinks(cards, mentionCounts)
     rendered += batch.length
   }
 
-  cards.innerHTML = ''
   renderMore()
-
-  const sentinel = document.createElement('div')
-  cards.appendChild(sentinel)
   const observer = new IntersectionObserver(entries => {
     if (!entries[0].isIntersecting) return
     if (rendered >= withLabel.length) { observer.disconnect(); sentinel.remove(); return }

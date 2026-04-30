@@ -11,7 +11,7 @@ export default `<!DOCTYPE html>
 @font-face{font-family:mono;src:url(/assets/fonts/intelone-mono-font-family-regular.otf) format(opentype)}
 :root{--bg-darkest:#222;--text:#A0A0A2;--header:#79808A;--alt1:#79808A;--alt3:#957A65}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-size:1.2rem;background:var(--bg-darkest);color:var(--text);font-family:Inter,Arial,sans-serif;line-height:1.6}
+body{font-size:1.3rem;background:var(--bg-darkest);color:var(--text);font-family:Inter,Arial,sans-serif;line-height:1.6}
 .wrap{max-width:65ch;margin:0 auto;padding:2.5rem 1.5rem}
 .title{font-family:header;font-size:175%;color:var(--header);text-transform:uppercase;letter-spacing:.05em}
 .subtitle{color:var(--alt1);font-size:85%;margin-bottom:0}

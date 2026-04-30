@@ -25,11 +25,12 @@ Hand-picked playlists of RSS/Atom feeds, organised by vibe. Browse, follow, read
 git clone https://github.com/qualityshepherd/discover
 cd discover
 npm install
+cp wrangler.example.toml wrangler.toml
 wrangler login
 wrangler kv namespace create DISCOVER_KV
 ```
 
-Paste the KV namespace `id` into `wrangler.toml`, then:
+Paste the KV namespace `id` into `wrangler.toml`. Create an R2 bucket in the Cloudflare dashboard and paste its name in too. Set your `name` and `DOMAIN_NAME`, then:
 
 ```bash
 wrangler deploy
@@ -42,10 +43,10 @@ Go to `/admin`, enter a passphrase, copy your pubkey, paste it into `wrangler.to
 `/admin` — manage playlists, sources, and content moderation.
 
 - **Playlists** — create and edit themed groups of RSS sources
-- **Sources** — add RSS/Atom feed URLs; the cron fetches them every ~23h and builds the link graph for webmentions
+- **Sources** — add RSS/Atom feed URLs; the cron fetches on a rolling schedule (8–48h depending on post frequency) and builds the link graph for webmentions
 - **Pending** — review suggested feeds; approve into a playlist or reject
 - **Batch validate** — paste multiple URLs, validate in bulk, add directly or queue to pending
-- **Blocked domains** — substring-matched blocklist; `recipe` blocks any domain containing it
+- **Blocked domains** — hostname blocklist; exact match or subdomain (`example.com` blocks `sub.example.com` but not `notexample.com`)
 - **Analytics** — hit counts, top paths, countries
 
 ## Seeding

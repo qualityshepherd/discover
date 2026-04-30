@@ -11,7 +11,7 @@ import {
   isCuratorOf, shouldUpdateLastSeen,
   getUserFeedSlug, setUserFeedSlug, getUserFeed, setUserFeed
 } from './discover-kv.js'
-import { checkDiscoverFeeds, computeFrequency, fetchAndSaveSource, applySourceDatas, fetchSource, buildLinkGraph } from './discover-cron.js'
+import { checkDiscoverFeeds, computeFrequency, fetchAndSaveSource, applySourceDatas, fetchSource, buildLinkGraph, VIDEO_DOMAINS, findImage } from './discover-cron.js'
 
 // re-export for worker/index.js and tests
 export { checkDiscoverFeeds, computeFrequency, makeId, computeTags }
@@ -149,29 +149,17 @@ const handleOpml = async (kv, id) => {
   })
 }
 
-// POST /api/discover/feed — merged posts from followed playlists
-const handleFeed = async (kv, req) => {
-  const body = await parseJsonBody(req)
-  const ids = Array.isArray(body?.ids) ? body.ids.filter(Boolean) : []
-  const sourceUrls = Array.isArray(body?.sources) ? body.sources.filter(Boolean) : []
-  if (!ids.length && !sourceUrls.length) return cors(json({ posts: [] }))
-
-  const feeds = (await Promise.all(ids.map(id => getFeed(kv, id)))).filter(Boolean)
-  const allSourceUrls = [...new Set([
-    ...feeds.flatMap(f => f.sources || []),
-    ...sourceUrls
-  ])]
-
+// Resolve source data for a list of URLs: try source:all, fall back to individual KV,
+// live-fetch anything still missing (custom OPML feeds never written to KV).
+const resolveSourceAll = async (kv, allSourceUrls) => {
   const sourceAll = await kv.get('source:all', { type: 'json' }) || {}
 
-  // KV fallback for playlist sources with individual keys not yet in source:all
   const missing = allSourceUrls.filter(u => !sourceAll[makeId(u)])
-  const fallbacks = missing.length
-    ? await Promise.all(missing.map(u => getSourceData(kv, u)))
-    : []
-  missing.forEach((u, i) => { if (fallbacks[i]) sourceAll[makeId(u)] = fallbacks[i] })
+  if (missing.length) {
+    const fallbacks = await Promise.all(missing.map(u => getSourceData(kv, u)))
+    missing.forEach((u, i) => { if (fallbacks[i]) sourceAll[makeId(u)] = fallbacks[i] })
+  }
 
-  // Live-fetch sources still missing (custom OPML feeds not in any playlist — never written to KV)
   const stillMissing = missing.filter(u => !sourceAll[makeId(u)])
   if (stillMissing.length) {
     const results = await Promise.all(stillMissing.map(async (url) => {
@@ -180,12 +168,7 @@ const handleFeed = async (kv, req) => {
       const posts = result.posts.slice(0, 3).map(p => ({
         title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content
       }))
-      const image = result.posts.reduce((img, p) => {
-        if (img) return img
-        const m = (p.content || '').match(/<img[^>]+src=["']([^"']+)["']/i)
-        return m?.[1]?.startsWith('http') ? m[1] : null
-      }, null)
-      return { url, posts, image: image || null, siteUrl: result.siteUrl || null }
+      return { url, posts, image: findImage(result.posts) || null, siteUrl: result.siteUrl || null }
     }))
     let cacheUpdated = false
     results.forEach((data, i) => {
@@ -195,6 +178,21 @@ const handleFeed = async (kv, req) => {
     })
     if (cacheUpdated) await kv.put('source:all', JSON.stringify(sourceAll))
   }
+
+  return sourceAll
+}
+
+// POST /api/discover/feed — merged posts from followed playlists
+const handleFeed = async (kv, req) => {
+  const body = await parseJsonBody(req)
+  const ids = Array.isArray(body?.ids) ? body.ids.filter(Boolean) : []
+  const sourceUrls = Array.isArray(body?.sources) ? body.sources.filter(Boolean) : []
+  if (!ids.length && !sourceUrls.length) return cors(json({ posts: [] }))
+
+  const feeds = (await Promise.all(ids.map(id => getFeed(kv, id)))).filter(Boolean)
+  const allSourceUrls = [...new Set([...feeds.flatMap(f => f.sources || []), ...sourceUrls])]
+
+  const sourceAll = await resolveSourceAll(kv, allSourceUrls)
 
   const seen = new Set()
   const posts = allSourceUrls
@@ -301,7 +299,7 @@ const handlePreview = async (req, kv) => {
   if (!result.posts) return cors(json({ error: result.statusCode ? `HTTP ${result.statusCode}` : (result.error || 'could not fetch feed') }, 422))
   if (!result.posts.length) return cors(json({ error: 'no posts found' }, 422))
   const title = result.posts[0]?.feed?.title || new URL(url).hostname
-  const image = result.posts.reduce((img, p) => img || (p.content?.match(/<img[^>]+src=["']([^"']+)["']/i)?.[1]?.startsWith('http') ? p.content.match(/<img[^>]+src=["']([^"']+)["']/i)[1] : null), null)
+  const image = findImage(result.posts)
   const posts = result.posts.slice(0, 2).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
   return cors(json({ title, image, posts, siteUrl: result.siteUrl || null }))
 }
@@ -760,7 +758,7 @@ const handleWebping = async (kv) => {
         try {
           const domain = new URL(href).hostname
           if (domain === fromDomain) continue
-          if (domain.includes('youtube.com') || domain.includes('youtu.be')) continue
+          if (VIDEO_DOMAINS.has(domain)) continue
           if (sourceDomains.has(domain)) {
             matches.push({ from: allSourceUrls[i], post: post.url, postTitle: post.title, linksTo: href, targetSource: sourceDomains.get(domain) })
           }
@@ -843,9 +841,20 @@ export const handleDiscover = async (req, env) => {
     return handlePlaylistRefresh(kv, id)
   }
 
-  const ADMIN_RESERVED = new Set(['source', 'sources', 'feeds', 'pending', 'approve', 'add', 'blocked', 'check', 'normalize-urls', 'reset-streaks', 'curator', 'new', 'random', 'submit', 'feed', 'validate', 'preview', 'status'])
+  // Specific PATCH/DELETE paths that would otherwise match the /admin/:id playlist catch-all
+  if (path === '/api/discover/admin/source') {
+    if (!isOwner) return json({ error: 'unauthorized' }, 401)
+    if (method === 'PATCH') return handleSourceEdit(req, kv)
+    if (method === 'DELETE') return handleSourceDelete(req, kv)
+  }
+  if (method === 'DELETE' && path === '/api/discover/admin/pending') {
+    if (!isOwner) return json({ error: 'unauthorized' }, 401)
+    return handlePendingReject(req, kv)
+  }
+
+  // Catch-all for playlist PATCH/DELETE — specific paths above must come first
   const adminIdMatch = path.match(/^\/api\/discover\/admin\/([^/]+)$/)
-  if (adminIdMatch && !ADMIN_RESERVED.has(adminIdMatch[1])) {
+  if (adminIdMatch) {
     const id = adminIdMatch[1]
     if (method === 'PATCH') {
       if (!isOwner && !isCuratorOf(curator, id)) return json({ error: 'unauthorized' }, 401)
@@ -875,13 +884,10 @@ export const handleDiscover = async (req, env) => {
     return json(Object.values(index))
   }
   if (method === 'GET' && path === '/api/discover/admin/pending') return handlePendingList(kv)
-  if (method === 'DELETE' && path === '/api/discover/admin/pending') return handlePendingReject(req, kv)
   if (method === 'POST' && path === '/api/discover/admin/validate') return handleValidate(req, kv)
   if (method === 'POST' && path === '/api/discover/admin/approve') return handleApprove(req, kv)
   if (method === 'POST' && path === '/api/discover/admin/add') return handleAdd(req, kv)
   if (method === 'POST' && path === '/api/discover/admin/source') return handleSourceRegister(req, kv)
-  if (method === 'PATCH' && path === '/api/discover/admin/source') return handleSourceEdit(req, kv)
-  if (method === 'DELETE' && path === '/api/discover/admin/source') return handleSourceDelete(req, kv)
 
   if (method === 'GET' && path === '/api/discover/admin/blocked') return handleBlockedList(kv)
   if (method === 'PUT' && path === '/api/discover/admin/blocked') return handleBlockedSave(req, kv)
@@ -996,36 +1002,7 @@ export const handlePersonalRss = async (req, env, slug) => {
   const feeds = (await Promise.all(ids.map(id => getFeed(kv, id)))).filter(Boolean)
   const allSourceUrls = [...new Set([...feeds.flatMap(f => f.sources || []), ...sourcesParam])]
 
-  const sourceAll = await kv.get('source:all', { type: 'json' }) || {}
-  const missing = allSourceUrls.filter(u => !sourceAll[makeId(u)])
-  if (missing.length) {
-    const fallbacks = await Promise.all(missing.map(u => getSourceData(kv, u)))
-    missing.forEach((u, i) => { if (fallbacks[i]) sourceAll[makeId(u)] = fallbacks[i] })
-  }
-
-  const stillMissing = missing.filter(u => !sourceAll[makeId(u)])
-  if (stillMissing.length) {
-    const results = await Promise.all(stillMissing.map(async (url) => {
-      const result = await fetchSource(url, 3)
-      if (!result.posts?.length) return null
-      const posts = result.posts.slice(0, 3).map(p => ({
-        title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content
-      }))
-      const image = result.posts.reduce((img, p) => {
-        if (img) return img
-        const m = (p.content || '').match(/<img[^>]+src=["']([^"']+)["']/i)
-        return m?.[1]?.startsWith('http') ? m[1] : null
-      }, null)
-      return { url, posts, image: image || null, siteUrl: result.siteUrl || null }
-    }))
-    let cacheUpdated = false
-    results.forEach((data, i) => {
-      if (!data) return
-      sourceAll[makeId(stillMissing[i])] = data
-      cacheUpdated = true
-    })
-    if (cacheUpdated) await kv.put('source:all', JSON.stringify(sourceAll))
-  }
+  const sourceAll = await resolveSourceAll(kv, allSourceUrls)
 
   const seen = new Set()
   const posts = allSourceUrls

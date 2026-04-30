@@ -5,7 +5,7 @@ import {
   listCurators, deleteCurator, isCuratorInactive
 } from './discover-kv.js'
 
-const VIDEO_DOMAINS = new Set(['youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv', 'rumble.com'])
+export const VIDEO_DOMAINS = new Set(['youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv', 'rumble.com'])
 
 const MAX_FETCHES_PER_RUN = 20
 
@@ -55,7 +55,7 @@ export const computeFrequency = (posts) => {
   return 'inactive'
 }
 
-const findImage = (posts) => {
+export const findImage = (posts) => {
   for (const p of (posts || [])) {
     const m = p.content?.match(/<img[^>]+src=["']([^"']+)["']/i)
     const src = m?.[1]
@@ -122,13 +122,13 @@ export const buildLinkGraph = async (kv, sourceIndex, freshData) => {
       for (const [, href] of post.content.matchAll(/href=["']([^"']+)["']/g)) {
         try {
           const domain = new URL(href).hostname.replace(/^www\./, '')
-          if (domain === fromDomain) continue
-          if (VIDEO_DOMAINS.has(domain)) continue
+          if (domain === fromDomain) continue // skip self-links
+          if (VIDEO_DOMAINS.has(domain)) continue // skip youtube
           const targetUrl = domainToSource.get(domain)
-          if (!targetUrl) continue
+          if (!targetUrl) continue // only include discover sources
           const targetHash = makeId(targetUrl)
           if (targetHash === fromHash) continue
-          const dedupeKey = `${fromHash}:${post.url}`
+          const dedupeKey = `${fromHash}:${post.url}:${targetHash}`
           if (seenInPost.has(dedupeKey)) continue
           seenInPost.add(dedupeKey)
           if (!byTarget.has(targetHash)) byTarget.set(targetHash, [])

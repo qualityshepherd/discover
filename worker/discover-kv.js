@@ -130,8 +130,8 @@ export const isCuratorInactive = (curator, now = Date.now()) =>
 
 // Pending / blocked helpers
 
-export const getPending = (kv) => kv.get(KV_PENDING, { type: 'json' }) || []
-export const getBlocked = (kv) => kv.get(KV_BLOCKED, { type: 'json' }) || []
+export const getPending = (kv) => kv.get(KV_PENDING, { type: 'json' })
+export const getBlocked = (kv) => kv.get(KV_BLOCKED, { type: 'json' })
 
 export const isBlocked = async (kv, sources) => {
   const blocked = await getBlocked(kv) || []

@@ -77,8 +77,9 @@ export default {
     // Sitemap
     if (path === '/sitemap.xml') {
       const { keys } = await env.DISCOVER_KV.list({ prefix: 'feed:' })
-      const locs = keys.map(k => `  <url><loc>https://discover.brine.dev/discover/${k.name.slice(5)}</loc></url>`).join('\n')
-      const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>https://discover.brine.dev/</loc></url>\n  <url><loc>https://discover.brine.dev/about</loc></url>\n${locs}\n</urlset>`
+      const base = `https://${env.DOMAIN_NAME}`
+      const locs = keys.map(k => `  <url><loc>${base}/discover/${k.name.slice(5)}</loc></url>`).join('\n')
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>${base}/</loc></url>\n  <url><loc>${base}/about</loc></url>\n${locs}\n</urlset>`
       return new Response(xml, { headers: { 'Content-Type': 'application/xml;charset=utf-8' } })
     }
 
@@ -92,8 +93,8 @@ export default {
       if (!feed) return withSec(baseRes)
       const title = `${feed.title} · discover rss feeds worth reading`
       const desc = feed.description || 'A curated RSS playlist on discover.'
-      const img = feed.coverImage?.startsWith('http') ? feed.coverImage : 'https://discover.brine.dev/images/og.png'
-      const canonical = `https://discover.brine.dev/discover/${id}`
+      const img = feed.coverImage?.startsWith('http') ? feed.coverImage : `https://${env.DOMAIN_NAME}/images/og.png`
+      const canonical = `https://${env.DOMAIN_NAME}/discover/${id}`
       const inject = [
         `  <meta name="description" content="${escHtml(desc)}">`,
         '  <meta property="og:type" content="website">',

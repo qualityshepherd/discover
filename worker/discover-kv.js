@@ -139,7 +139,7 @@ export const isBlocked = async (kv, sources) => {
   return sources.some(url => {
     try {
       const host = new URL(url).hostname.replace(/^www\./, '')
-      return blocked.some(b => url.includes(b) || host.includes(b))
+      return blocked.some(b => host === b || host.endsWith('.' + b))
     } catch { return false }
   })
 }

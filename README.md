@@ -6,7 +6,7 @@ Authors don't sign up, don't federate, don't install anything. They just keep bl
 
 Hand-picked playlists of RSS/Atom feeds, organised by vibe. Browse, follow, read inline, export to your reader. Runs on Cloudflare Workers' free tier. Forever.
 
-Anyone can fork this, stand up their own instance, and curate their own playlists with _their_ taste. Your corner of the web. Just you, some RSS feeds, and a $0 bill from Cloudflare.
+Anyone can fork this, stand up their own instance, and curate their own playlists to _their_ taste. Your corner of the web for the low, low price of $0. 
 
 ## Features
 

@@ -162,20 +162,16 @@ const resolveSourceAll = async (kv, allSourceUrls) => {
 
   const stillMissing = missing.filter(u => !sourceAll[makeId(u)])
   if (stillMissing.length) {
-    const results = await Promise.all(stillMissing.map(async (url) => {
+    let cacheUpdated = false
+    for (const url of stillMissing) {
       const result = await fetchSource(url, 3)
-      if (!result.posts?.length) return null
+      if (!result.posts?.length) continue
       const posts = result.posts.slice(0, 3).map(p => ({
         title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content
       }))
-      return { url, posts, image: findImage(result.posts) || null, siteUrl: result.siteUrl || null }
-    }))
-    let cacheUpdated = false
-    results.forEach((data, i) => {
-      if (!data) return
-      sourceAll[makeId(stillMissing[i])] = data
+      sourceAll[makeId(url)] = { url, posts, image: findImage(result.posts) || null, siteUrl: result.siteUrl || null }
       cacheUpdated = true
-    })
+    }
     if (cacheUpdated) await kv.put('source:all', JSON.stringify(sourceAll))
   }
 

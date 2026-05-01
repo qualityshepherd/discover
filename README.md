@@ -1,19 +1,19 @@
 # [discover](https://discover.brine.dev)
 
-**Curated RSS discovery. Federation by fork. No algorithm. No dependencies.**
+**Curated RSS discovery. Federation by fork. No algorithm. No platform.**
 
-Discover is hand-picked playlists of RSS/Atom feeds, organised by vibe. Browse, follow, read inline, export to your reader. Runs on Cloudflare Workers' free tier. Forever.
+Authors don't sign up, don't federate, don't install anything, and don't even need to know you exist. They just keep blogging like it's 2005 — and a discover instance picks them up.
 
-**But this is the point**: anyone can fork this, stand up their own instance, and curate their own playlists with _their_ taste. Bigger directories are welcome to steal the idea too! Curate _your_ corner of the web. Just you, some RSS feeds, and a $0 bill from Cloudflare.
+Hand-picked playlists of RSS/Atom feeds, organised by vibe. Browse, follow, read inline, export to your reader. Runs on Cloudflare Workers' free tier. Forever.
 
-Authors don't sign up, don't federate, don't install anything, and don't even need to know you exist. They just keep blogging like it's 2005 and a discover instance picks them up.
+Anyone can fork this, stand up their own instance, and curate their own playlists with _their_ taste. Your corner of the web. Just you, some RSS feeds, and a $0 bill from Cloudflare.
 
 ## Features
 
 - **Browse** — curated playlists with tag filtering, search, random shuffle, and a "new" view of recently-added sources
 - **Feed** — follow playlists or individual sources, read posts inline, export/import OPML, add any RSS URL directly
 - **Suggest a feed** — public submission form on `/about`; server-side validation rejects click-through and invalid feeds before they hit the queue
-- **Webmentions via RSS** — every source gets a `/api/mentions/{id}.xml` feed. When other sources in the directory link to it, a mention appears. Subscribe in any RSS reader to find out when someone cites your work
+- **Webmentions via RSS** — when sources in the directory link to each other, the cited author gets a mention feed at `/api/mentions/{id}.xml`. Delivered the same way authors read everything else: their RSS reader
 - **PWA** — installable, dark/light theme, works offline for cached views
 - **Analytics** — privacy-friendly, no third parties. Tracks hits, top paths, countries, and RSS playlist subscribers. No cookies, no JS fingerprinting
 

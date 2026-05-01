@@ -53,10 +53,6 @@ Go to `/admin`, enter a passphrase, copy your pubkey, paste it into `wrangler.to
 - **Blocked domains** — hostname blocklist; exact match or subdomain (`example.com` blocks `sub.example.com` but not `notexample.com`)
 - **Analytics** — hit counts, top paths, countries
 
-## Seeding
-
-To seed a fresh instance with playlists, paste `scripts/seed-discover.js` into the browser console while signed in at `/admin`.
-
 ## Deployment
 
 ```bash

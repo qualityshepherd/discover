@@ -1,8 +1,12 @@
 # [discover](https://discover.brine.dev)
 
-**Curated RSS discovery. No algorithm. No ads.**
+**Curated RSS discovery. Federation by fork. No algorithm. No dependencies.**
 
-Hand-picked playlists of RSS/Atom feeds, organised by vibe. Browse, follow, read inline, export to your reader. Runs on Cloudflare Workers' free tier.
+Discover is hand-picked playlists of RSS/Atom feeds, organised by vibe. Browse, follow, read inline, export to your reader. Runs on Cloudflare Workers' free tier. Forever.
+
+**But this is the point**: anyone can fork this, stand up their own instance, and curate their own playlists with _their_ taste. Bigger directories are welcome to steal the idea too! Curate _your_ corner of the web. Just you, some RSS feeds, and a $0 bill from Cloudflare.
+
+Authors don't sign up, don't federate, don't install anything, and don't even need to know you exist. They just keep blogging like it's 2005 and a discover instance picks them up.
 
 ## Features
 

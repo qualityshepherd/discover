@@ -23,7 +23,5 @@
     "puppeteer": "^24.3.1",
     "start-server-and-test": "^2.0.12"
   },
-  "dependencies": {
-    "marked": "^15.0.12"
-  }
+  "dependencies": {}
 }

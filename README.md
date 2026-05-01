@@ -2,7 +2,7 @@
 
 **Curated RSS discovery. Federation by fork. No algorithm. No platform.**
 
-Authors don't sign up, don't federate, don't install anything, and don't even need to know you exist. They just keep blogging like it's 2005 — and a discover instance picks them up.
+Authors don't sign up, don't federate, don't install anything. They just keep blogging like it's 2005 and a discover instance picks them up.
 
 Hand-picked playlists of RSS/Atom feeds, organised by vibe. Browse, follow, read inline, export to your reader. Runs on Cloudflare Workers' free tier. Forever.
 

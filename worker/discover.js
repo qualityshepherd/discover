@@ -11,7 +11,7 @@ import {
   isCuratorOf, shouldUpdateLastSeen,
   getUserFeedSlug, setUserFeedSlug, getUserFeed, setUserFeed
 } from './discover-kv.js'
-import { checkDiscoverFeeds, computeFrequency, fetchAndSaveSource, applySourceDatas, fetchSource, buildLinkGraph, VIDEO_DOMAINS, findImage } from './discover-cron.js'
+import { checkDiscoverFeeds, computeFrequency, fetchAndSaveSource, applySourceDatas, fetchSource, buildLinkGraph, buildCurateCandidates, VIDEO_DOMAINS, findImage } from './discover-cron.js'
 
 // re-export for worker/index.js and tests
 export { checkDiscoverFeeds, computeFrequency, makeId, computeTags }
@@ -777,6 +777,62 @@ const handleAllOpml = async (kv) => {
   })
 }
 
+// GET /api/discover/admin/curate
+const handleCurateGet = async (kv) => {
+  const [pending, candidates, trending] = await Promise.all([
+    getPending(kv),
+    kv.get('discover:curate-candidates', { type: 'json' }),
+    kv.get('discover:trending-domains', { type: 'json' })
+  ])
+  return json({ pending: pending || [], candidates: candidates || [], trending: trending || [] })
+}
+
+// POST /api/discover/admin/curate/approve — move candidate to pending
+const handleCurateApprove = async (req, kv) => {
+  const body = await parseJsonBody(req)
+  if (!body?.domain || !body?.feedUrl) return json({ error: 'domain and feedUrl required' }, 400)
+  const [pending, candidates] = await Promise.all([getPending(kv), kv.get('discover:curate-candidates', { type: 'json' })])
+  const pendingList = pending || []
+  if (!pendingList.find(p => p.url === body.feedUrl)) {
+    pendingList.push({ url: body.feedUrl, title: body.domain, description: '', submittedAt: new Date().toISOString() })
+  }
+  await Promise.all([
+    kv.put(KV_PENDING, JSON.stringify(pendingList)),
+    kv.put('discover:curate-candidates', JSON.stringify((candidates || []).filter(c => c.domain !== body.domain)))
+  ])
+  return json({ ok: true })
+}
+
+// DELETE /api/discover/admin/curate/candidate
+const handleCurateDismissCandidate = async (req, kv) => {
+  const body = await parseJsonBody(req)
+  if (!body?.domain) return json({ error: 'domain required' }, 400)
+  const [candidates, dismissed] = await Promise.all([
+    kv.get('discover:curate-candidates', { type: 'json' }),
+    kv.get('discover:dismissed-domains', { type: 'json' })
+  ])
+  await Promise.all([
+    kv.put('discover:curate-candidates', JSON.stringify((candidates || []).filter(c => c.domain !== body.domain))),
+    kv.put('discover:dismissed-domains', JSON.stringify([...new Set([...(dismissed || []), body.domain])]))
+  ])
+  return json({ ok: true })
+}
+
+// DELETE /api/discover/admin/curate/trending
+const handleCurateDismissTrending = async (req, kv) => {
+  const body = await parseJsonBody(req)
+  if (!body?.domain) return json({ error: 'domain required' }, 400)
+  const [trending, dismissed] = await Promise.all([
+    kv.get('discover:trending-domains', { type: 'json' }),
+    kv.get('discover:dismissed-domains', { type: 'json' })
+  ])
+  await Promise.all([
+    kv.put('discover:trending-domains', JSON.stringify((trending || []).filter(t => t.domain !== body.domain))),
+    kv.put('discover:dismissed-domains', JSON.stringify([...new Set([...(dismissed || []), body.domain])]))
+  ])
+  return json({ ok: true })
+}
+
 // router
 
 export const handleDiscover = async (req, env) => {
@@ -865,6 +921,11 @@ export const handleDiscover = async (req, env) => {
   // Owner-only routes
   if (!isOwner) return json({ error: 'unauthorized' }, 401)
 
+  if (method === 'GET' && path === '/api/discover/admin/curate') return handleCurateGet(kv)
+  if (method === 'POST' && path === '/api/discover/admin/curate/approve') return handleCurateApprove(req, kv)
+  if (method === 'DELETE' && path === '/api/discover/admin/curate/candidate') return handleCurateDismissCandidate(req, kv)
+  if (method === 'DELETE' && path === '/api/discover/admin/curate/trending') return handleCurateDismissTrending(req, kv)
+
   if (method === 'GET' && path === '/api/discover/admin/status') {
     const lastCronOk = await kv.get('cron:lastOk')
     return json({ lastCronOk })
@@ -887,6 +948,14 @@ export const handleDiscover = async (req, env) => {
 
   if (method === 'GET' && path === '/api/discover/admin/blocked') return handleBlockedList(kv)
   if (method === 'PUT' && path === '/api/discover/admin/blocked') return handleBlockedSave(req, kv)
+  if (method === 'POST' && path === '/api/discover/admin/build-curate-candidates') {
+    const sourceIndex = await getSourceIndex(kv)
+    const allSourceUrls = [...new Set((await getFeeds(kv) || []).flatMap(f => f.sources || []))]
+    const sourceDatas = await Promise.all(allSourceUrls.map(u => getSourceData(kv, u)))
+    const freshData = new Map(allSourceUrls.map((u, i) => [u, sourceDatas[i]]).filter(([, d]) => d))
+    await buildCurateCandidates(kv, sourceIndex, freshData)
+    return json({ ok: true, sources: freshData.size })
+  }
   if (method === 'POST' && path === '/api/discover/admin/build-link-graph') {
     const sourceIndex = await getSourceIndex(kv)
     const allSourceUrls = [...new Set((await getFeeds(kv) || []).flatMap(f => f.sources || []))]

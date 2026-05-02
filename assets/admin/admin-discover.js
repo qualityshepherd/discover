@@ -319,82 +319,6 @@ function bindDcEntryRows (el) {
   })
 }
 
-export async function renderDcPending () {
-  const pending = await api('GET', '/api/discover/admin/pending')
-  const list = Array.isArray(pending) ? pending : []
-  const el = $('dc-pending-list')
-  const countEl = $('dc-pending-count')
-  const badge = $('nav-pending-badge')
-  if (countEl) countEl.textContent = list.length ? `(${list.length})` : ''
-  if (badge) {
-    badge.textContent = list.length || ''
-    badge.classList.toggle('hidden', !list.length)
-    badge.style.cursor = list.length ? 'pointer' : ''
-    badge.onclick = list.length ? () => $('dc-pending-list').scrollIntoView({ behavior: 'smooth', block: 'start' }) : null
-  }
-  if (!el) return
-  if (!list.length) { el.innerHTML = '<p class="muted" style="font-size:var(--text-sm)">no pending submissions.</p>'; return }
-  const playlistOptions = [...dcEntries].sort((a, b) => a.title.localeCompare(b.title))
-    .map(e => `<option value="${escHtml(e.id)}">${escHtml(e.title)}</option>`).join('')
-
-  el.innerHTML = list.map(p => `
-    <div class="dc-pending-row" data-pending-url="${escHtml(p.url)}">
-      <div class="dc-pending-url">${escHtml(p.url)}</div>
-      <div class="dc-pending-meta">submitted ${timeAgo(p.submittedAt)}</div>
-      <div class="dc-pending-actions">
-        <select class="dc-pending-playlist">
-          <option value="">no playlist</option>
-          ${playlistOptions}
-        </select>
-        <button class="btn btn-sm btn-primary dc-pending-approve">approve</button>
-        <button class="btn btn-sm dc-pending-reject">reject</button>
-        <button class="btn btn-sm btn-danger dc-pending-block">block</button>
-        <a href="${escHtml(p.url)}" target="_blank" rel="noopener" class="icon-btn" aria-label="Open feed">${ICON_EXTERNAL}</a>
-      </div>
-    </div>`).join('')
-
-  el.querySelectorAll('.dc-pending-approve').forEach(btn => {
-    const row = btn.closest('[data-pending-url]')
-    btn.addEventListener('click', async () => {
-      const url = row.dataset.pendingUrl
-      const playlistId = row.querySelector('.dc-pending-playlist').value
-      btn.disabled = true
-      const res = await api('POST', '/api/discover/admin/approve', { url, playlistId: playlistId || null })
-      if (res.error) { alert(res.error); btn.disabled = false; return }
-      await Promise.all([renderDcEntries(), renderDcPending()])
-    })
-  })
-
-  el.querySelectorAll('.dc-pending-reject').forEach(btn => {
-    const row = btn.closest('[data-pending-url]')
-    btn.addEventListener('click', async () => {
-      const url = row.dataset.pendingUrl
-      const res = await api('DELETE', '/api/discover/admin/pending', { url })
-      if (res.error) { alert(res.error); return }
-      await renderDcPending()
-    })
-  })
-
-  el.querySelectorAll('.dc-pending-block').forEach(btn => {
-    const row = btn.closest('[data-pending-url]')
-    btn.addEventListener('click', async () => {
-      const url = row.dataset.pendingUrl
-      let domain
-      try { domain = new URL(url).hostname.replace(/^www\./, '') } catch { domain = url }
-      const [rejectRes, blocked] = await Promise.all([
-        api('DELETE', '/api/discover/admin/pending', { url }),
-        api('GET', '/api/discover/admin/blocked')
-      ])
-      if (rejectRes.error) { alert(rejectRes.error); return }
-      const list = Array.isArray(blocked) ? blocked : []
-      if (!list.includes(domain)) {
-        await api('PUT', '/api/discover/admin/blocked', { entries: [...list, domain] })
-      }
-      await renderDcPending()
-    })
-  })
-}
-
 const BATCH_STATUS_LABEL = {
   valid: 'valid',
   duplicate: 'already in discover',
@@ -440,7 +364,6 @@ $('btn-dc-batch-validate').addEventListener('click', async () => {
       if (res.error && res.error !== 'already submitted') { alert(res.error); return }
       btn.textContent = '✓ queued'
       btn.disabled = true
-      await renderDcPending()
     })
   })
 

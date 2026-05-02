@@ -166,6 +166,115 @@ export const buildLinkGraph = async (kv, sourceIndex, freshData) => {
   if (indexDirty) await kv.put(KV_SOURCE_INDEX, JSON.stringify(sourceIndex))
 }
 
+const SKIP_CURATE_DOMAINS = new Set([
+  'twitter.com', 'x.com', 't.co', 'facebook.com', 'fb.com', 'instagram.com',
+  'linkedin.com', 'reddit.com', 'redd.it', 'tiktok.com', 'pinterest.com',
+  'wikipedia.org', 'archive.org', 'web.archive.org',
+  'google.com', 'apple.com', 'microsoft.com', 'amazon.com', 'amzn.to',
+  'paypal.com', 'stripe.com', 'netlify.app', 'vercel.app', 'github.io',
+  'wp.com', 'wordpress.com'
+])
+
+const probeFeedUrl = async (domain) => {
+  try {
+    const res = await fetch(`https://${domain}`, { signal: AbortSignal.timeout(5000), headers: { 'User-Agent': 'discover/1.0 (+https://discover.brine.dev; RSS reader)' } })
+    if (res.ok) {
+      const html = await res.text()
+      const m = html.match(/<link[^>]+type=["']application\/(rss|atom)\+xml["'][^>]+href=["']([^"']+)["']/i) ||
+                html.match(/<link[^>]+href=["']([^"']+)["'][^>]+type=["']application\/(rss|atom)\+xml["']/i)
+      if (m) {
+        const href = m[2] || m[1]
+        if (href.startsWith('http')) return href
+        return `https://${domain}${href.startsWith('/') ? '' : '/'}${href}`
+      }
+    }
+  } catch {}
+  for (const p of ['/feed', '/rss', '/atom.xml', '/feed.xml', '/rss.xml', '/index.xml']) {
+    try {
+      const res = await fetch(`https://${domain}${p}`, { signal: AbortSignal.timeout(4000), headers: { 'User-Agent': 'discover/1.0 (+https://discover.brine.dev; RSS reader)' } })
+      if (!res.ok) continue
+      const ct = res.headers.get('content-type') || ''
+      if (ct.includes('xml') || ct.includes('rss') || ct.includes('atom')) return `https://${domain}${p}`
+    } catch {}
+  }
+  return null
+}
+
+export const buildCurateCandidates = async (kv, sourceIndex, freshData) => {
+  if (!freshData.size) return
+
+  const knownDomains = new Set()
+  for (const entry of Object.values(sourceIndex)) {
+    try {
+      const h = new URL(entry.url).hostname.replace(/^www\./, '')
+      knownDomains.add(h)
+    } catch {}
+  }
+
+  const dismissed = new Set(await kv.get('discover:dismissed-domains', { type: 'json' }) || [])
+  const domainSources = new Map()
+
+  for (const [sourceUrl, data] of freshData) {
+    if (!data?.posts?.length) continue
+    let fromDomain
+    try { fromDomain = new URL(sourceUrl).hostname.replace(/^www\./, '') } catch { continue }
+    for (const post of data.posts) {
+      if (!post.content) continue
+      for (const [, href] of post.content.matchAll(/href=["']([^"']+)["']/g)) {
+        try {
+          const domain = new URL(href).hostname.replace(/^www\./, '')
+          if (domain === fromDomain) continue
+          if (VIDEO_DOMAINS.has(domain) || SKIP_CURATE_DOMAINS.has(domain)) continue
+          if (knownDomains.has(domain) || dismissed.has(domain)) continue
+          if (!domainSources.has(domain)) domainSources.set(domain, new Set())
+          domainSources.get(domain).add(sourceUrl)
+        } catch {}
+      }
+    }
+  }
+
+  if (!domainSources.size) return
+
+  const scored = [...domainSources.entries()]
+    .map(([domain, srcs]) => ({ domain, score: srcs.size, sources: [...srcs] }))
+    .sort((a, b) => b.score - a.score)
+
+  const [existingCandidates, existingTrending] = await Promise.all([
+    kv.get('discover:curate-candidates', { type: 'json' }),
+    kv.get('discover:trending-domains', { type: 'json' })
+  ])
+  const candidates = existingCandidates || []
+  const trending = existingTrending || []
+  const candidateDomains = new Set(candidates.map(c => c.domain))
+  const trendingDomains = new Set(trending.map(t => t.domain))
+
+  for (const entry of [...candidates, ...trending]) {
+    const srcs = domainSources.get(entry.domain)
+    if (srcs) {
+      entry.score = Math.max(entry.score, srcs.size)
+      entry.sources = [...new Set([...entry.sources, ...srcs])]
+    }
+  }
+
+  const now = new Date().toISOString()
+  const newToProbe = scored.filter(({ domain }) => !candidateDomains.has(domain) && !trendingDomains.has(domain)).slice(0, 3)
+
+  for (const { domain, score, sources } of newToProbe) {
+    const feedUrl = await probeFeedUrl(domain)
+    const entry = { domain, score, sources, firstSeen: now, probedAt: now }
+    if (feedUrl) candidates.push({ ...entry, feedUrl })
+    else trending.push(entry)
+  }
+
+  candidates.sort((a, b) => b.score - a.score)
+  trending.sort((a, b) => b.score - a.score)
+
+  await Promise.all([
+    kv.put('discover:curate-candidates', JSON.stringify(candidates.slice(0, 50))),
+    kv.put('discover:trending-domains', JSON.stringify(trending.slice(0, 50)))
+  ])
+}
+
 export const pruneCurators = async (kv) => {
   const curators = await listCurators(kv)
   const inactive = curators.filter(c => isCuratorInactive(c))
@@ -243,6 +352,7 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
   if (changedFeeds.length) await saveFeeds(kv, allFeeds, changedFeeds)
 
   await buildLinkGraph(kv, sourceIndex, freshData).catch(err => console.error('buildLinkGraph failed:', err))
+  await buildCurateCandidates(kv, sourceIndex, freshData).catch(err => console.error('buildCurateCandidates failed:', err))
   await pruneCurators(kv).catch(err => console.error('pruneCurators failed:', err))
 
   if (freshData.size) {

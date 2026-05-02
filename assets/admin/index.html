@@ -21,7 +21,8 @@
     </svg>
     <div class="nav-links">
       <a href="/" id="nav-home" class="nav-icon hidden" title="view site" aria-label="view site" style="font-size:1rem">⌂</a>
-      <a href="#discover" id="nav-discover" class="hidden">discover<span id="nav-pending-badge" class="nav-badge hidden"></span></a>
+      <a href="#discover" id="nav-discover" class="hidden">discover</a>
+      <a href="#curate" id="nav-curate" class="hidden">curate<span id="nav-curate-badge" class="nav-badge hidden"></span></a>
       <a href="#analytics" id="nav-analytics" class="hidden">analytics</a>
       <a href="#settings" id="nav-settings" class="hidden nav-icon" title="settings" aria-label="settings">⚙</a>
       <span id="nav-user" class="muted hidden"></span>
@@ -168,12 +169,6 @@
       <div id="dc-sources-list"></div>
     </div>
 
-    <!-- pending submissions -->
-    <div class="field mt-6">
-      <h3 class="view-subtitle">pending <span id="dc-pending-count" class="muted"></span></h3>
-      <div id="dc-pending-list"></div>
-    </div>
-
     <!-- batch import -->
     <div class="field mt-6">
       <h3 class="view-subtitle">batch import</h3>
@@ -190,6 +185,27 @@
       <h3 class="view-subtitle">blocked domains</h3>
       <textarea id="dc-block-textarea" rows="4" placeholder="one domain or url per line" class="textarea-code"></textarea>
       <button class="btn btn-sm mt-2" id="btn-dc-block-save">save</button>
+    </div>
+  </div>
+
+  <!-- curate -->
+  <div id="view-curate" class="hidden">
+    <div class="view-header">
+      <h2 class="view-title">curate</h2>
+      <button id="btn-curate-scan" class="btn btn-sm">scan all sources</button>
+    </div>
+    <p id="curate-scan-status"></p>
+    <div class="field">
+      <h3 class="view-subtitle">suggested <span id="curate-pending-count" class="muted"></span></h3>
+      <div id="curate-pending-list"></div>
+    </div>
+    <div class="field mt-6">
+      <h3 class="view-subtitle">candidates <span id="curate-candidates-count" class="muted"></span></h3>
+      <div id="curate-candidates-list"></div>
+    </div>
+    <div class="field mt-6">
+      <h3 class="view-subtitle">trending <span id="curate-trending-count" class="muted"></span></h3>
+      <div id="curate-trending-list"></div>
     </div>
   </div>
 

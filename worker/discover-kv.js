@@ -14,6 +14,9 @@ export const KV_SOURCE_INDEX = 'discover:source-index' // { hash: { url, lastFet
 export const KV_SOURCE_PREFIX = 'discover:source:' // one entry per unique RSS URL
 export const KV_PENDING = 'discover:pending'
 export const KV_BLOCKED = 'discover:blocked'
+export const KV_CURATE_CANDIDATES = 'discover:curate-candidates'
+export const KV_TRENDING_DOMAINS = 'discover:trending-domains'
+export const KV_DISMISSED_DOMAINS = 'discover:dismissed-domains'
 
 // Stable short hash used as a KV key suffix for any URL
 

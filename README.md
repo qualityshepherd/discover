@@ -4,7 +4,7 @@
 
 Authors don't sign up, don't federate, don't install anything. They just keep blogging like it's 2005 and a discover instance picks them up.
 
-Hand-picked playlists of RSS/Atom feeds, organised by vibe. Browse, follow, read inline, export to your reader. Runs on Cloudflare Workers' free tier. Forever.
+Hand-picked playlists of RSS/Atom feeds, organized by vibe. Browse, follow, read inline, export to your reader. Runs on Cloudflare Workers' free tier. Forever.
 
 Anyone can fork this, stand up their own instance, and curate their own playlists to _their_ taste. Your corner of the web for the low, low price of $0. 
 

@@ -229,7 +229,8 @@ label { display: block; font-size: 0.85rem; color: var(--color-text-muted); marg
 .status-ok    { background: #4a9a4a; }
 .status-warn  { background: #b89030; }
 .status-error { background: #a04040; }
-.status-null  { background: #444; }
+.status-null     { background: #444; }
+.status-inactive { background: #4a6fa5; }
 
 /* Analytics */
 .a-nav { display: flex; gap: var(--s6); flex-wrap: wrap; }

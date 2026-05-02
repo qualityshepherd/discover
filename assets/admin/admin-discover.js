@@ -88,6 +88,7 @@ export async function renderDcEntries () {
 const sourceStatusDot = (s) => {
   if (!s.lastFetched) return '<span class="status-dot status-null" title="never fetched"></span>'
   if (!s.statusCode) return `<span class="status-dot status-error" title="${escHtml(s.error || 'network error')} · ${timeAgo(s.lastFetched)}"></span>`
+  if (s.statusCode === 200 && s.frequency === 'inactive') return `<span class="status-dot status-inactive" title="inactive · ${timeAgo(s.lastFetched)}"></span>`
   const cls = s.statusCode === 200 ? 'status-ok' : s.statusCode < 500 ? 'status-warn' : 'status-error'
   const ago = timeAgo(s.lastFetched)
   const tip = s.statusCode === 200 ? (s.hasPosts ? `200 OK · ${ago}` : `200 — no posts · ${ago}`) : `${s.statusCode} · ${ago}`

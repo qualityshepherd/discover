@@ -42,6 +42,7 @@ export async function renderCurate () {
   renderPending(pending, playlists)
   renderCandidates(candidates)
   renderTrending(trending)
+  await renderBlocked()
 }
 
 function renderPending (list, playlists) {
@@ -181,3 +182,19 @@ function renderTrending (list) {
     })
   })
 }
+
+async function renderBlocked () {
+  const blocked = await api('GET', '/api/discover/admin/blocked')
+  const list = Array.isArray(blocked) ? blocked : []
+  const el = $('dc-block-textarea')
+  if (el) el.value = list.join('\n')
+}
+
+document.getElementById('btn-dc-block-save')?.addEventListener('click', async () => {
+  const entries = ($('dc-block-textarea').value || '').split('\n').map(l => {
+    const t = l.trim()
+    try { return new URL(t).hostname.replace(/^www\./, '') } catch { return t }
+  }).filter(Boolean)
+  await api('PUT', '/api/discover/admin/blocked', { entries })
+  await renderBlocked()
+})

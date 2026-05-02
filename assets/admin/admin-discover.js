@@ -3,21 +3,6 @@ import { api, $, escHtml, showError, timeAgo, ICON_EXTERNAL, ICON_TRASH, ICON_CL
 let dcEntries = []
 let pendingEditId = null
 
-export async function renderDcBlocked () {
-  const blocked = await api('GET', '/api/discover/admin/blocked')
-  const list = Array.isArray(blocked) ? blocked : []
-  $('dc-block-textarea').value = list.join('\n')
-}
-
-$('btn-dc-block-save').addEventListener('click', async () => {
-  const entries = $('dc-block-textarea').value.split('\n').map(l => {
-    const t = l.trim()
-    try { return new URL(t).hostname.replace(/^www\./, '') } catch { return t }
-  }).filter(Boolean)
-  await api('PUT', '/api/discover/admin/blocked', { entries })
-  await renderDcBlocked()
-})
-
 const dcFreqBadge = (f) => {
   if (!f.updateFrequency || f.updateFrequency === 'unknown') return ''
   return `<span class="dc-badge">${f.updateFrequency}</span>`

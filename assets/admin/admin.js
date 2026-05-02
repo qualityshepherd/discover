@@ -1,6 +1,6 @@
 import { deriveKeypair, signChallenge, scorePassphrase } from '../../../../../../lib/keys.js'
 import { $, api, getToken, setToken, showError } from './admin-utils.js'
-import { renderDcEntries, renderDcBlocked } from './admin-discover.js'
+import { renderDcEntries } from './admin-discover.js'
 import { renderCurate, updateCurateBadge } from './admin-curate.js'
 import { renderAnalytics } from './admin-analytics.js'
 
@@ -41,7 +41,7 @@ async function showLogin () {
 async function showDiscover () {
   if (!getToken()) return showLogin()
   showView('view-discover'); showNav()
-  await Promise.all([renderDcEntries(), renderDcBlocked(), updateCurateBadge(), checkCronHealth()])
+  await Promise.all([renderDcEntries(), updateCurateBadge(), checkCronHealth()])
 }
 
 async function showCurate () {

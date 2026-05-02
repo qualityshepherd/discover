@@ -217,6 +217,7 @@ const ensureMentionCounts = async () => {
 }
 
 const loadNew = async () => {
+  fetch('/api/hit?path=/new', { method: 'POST' }).catch(() => {})
   showView('browse')
   const cards = document.getElementById('discover-cards')
   cards.innerHTML = '<p class="muted">loading…</p>'
@@ -261,6 +262,7 @@ const loadNew = async () => {
 }
 
 const loadRandom = async () => {
+  fetch('/api/hit?path=/random', { method: 'POST' }).catch(() => {})
   showView('browse')
   const cards = document.getElementById('discover-cards')
   cards.innerHTML = '<p class="muted">loading…</p>'
@@ -295,12 +297,14 @@ const route = () => {
 
 document.getElementById('discover-search').addEventListener('input', () => filterAndRender())
 
-document.getElementById('btn-random').addEventListener('click', () => {
+document.getElementById('btn-random').addEventListener('click', (e) => {
+  e.preventDefault()
   history.pushState({}, '', '/random')
   loadRandom()
 })
 
-document.getElementById('btn-new').addEventListener('click', () => {
+document.getElementById('btn-new').addEventListener('click', (e) => {
+  e.preventDefault()
   history.pushState({}, '', '/new')
   loadNew()
 })

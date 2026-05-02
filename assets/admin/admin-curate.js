@@ -1,4 +1,4 @@
-import { $, api, escHtml, timeAgo, ICON_EXTERNAL } from './admin-utils.js'
+import { $, api, escHtml, timeAgo } from './admin-utils.js'
 
 const btn = document.getElementById('btn-curate-scan')
 const scanStatus = document.getElementById('curate-scan-status')
@@ -56,7 +56,7 @@ function renderPending (list, playlists) {
 
   el.innerHTML = list.map(p => `
     <div class="dc-pending-row" data-pending-url="${escHtml(p.url)}">
-      <div class="dc-pending-url">${escHtml(p.url)}</div>
+      <div class="dc-pending-url"><a href="${escHtml(p.url)}" target="_blank" rel="noopener">${escHtml(p.url)}</a></div>
       <div class="dc-pending-meta">submitted ${timeAgo(p.submittedAt)}</div>
       <div class="dc-pending-actions">
         <select class="dc-pending-playlist">
@@ -66,7 +66,6 @@ function renderPending (list, playlists) {
         <button class="btn btn-sm btn-primary dc-pending-approve">approve</button>
         <button class="btn btn-sm dc-pending-reject">reject</button>
         <button class="btn btn-sm btn-danger dc-pending-block">block</button>
-        <a href="${escHtml(p.url)}" target="_blank" rel="noopener" class="icon-btn" aria-label="Open feed">${ICON_EXTERNAL}</a>
       </div>
     </div>`).join('')
 
@@ -123,11 +122,11 @@ function renderCandidates (list) {
         <a href="https://${escHtml(c.domain)}" target="_blank" rel="noopener">${escHtml(c.domain)}</a>
         <span class="dc-badge">${c.score} source${c.score !== 1 ? 's' : ''}</span>
       </div>
-      <div class="dc-pending-meta">${escHtml(c.feedUrl)}</div>
+      <div class="dc-pending-meta"><a href="${escHtml(c.feedUrl)}" target="_blank" rel="noopener">${escHtml(c.feedUrl)}</a></div>
       <div class="dc-pending-actions">
         <button class="btn btn-sm btn-primary curate-approve">→ suggested</button>
         <button class="btn btn-sm btn-danger curate-dismiss">dismiss</button>
-        <a href="${escHtml(c.feedUrl)}" target="_blank" rel="noopener" class="icon-btn" aria-label="Open feed">${ICON_EXTERNAL}</a>
+        <button class="btn btn-sm btn-danger curate-block">block</button>
       </div>
     </div>`).join('')
 
@@ -152,6 +151,20 @@ function renderCandidates (list) {
       await renderCurate()
     })
   })
+
+  el.querySelectorAll('.curate-block').forEach(btn => {
+    const row = btn.closest('[data-domain]')
+    btn.addEventListener('click', async () => {
+      const domain = row.dataset.domain
+      const [, blocked] = await Promise.all([
+        api('DELETE', '/api/discover/admin/curate/candidate', { domain }),
+        api('GET', '/api/discover/admin/blocked')
+      ])
+      const list = Array.isArray(blocked) ? blocked : []
+      if (!list.includes(domain)) await api('PUT', '/api/discover/admin/blocked', { entries: [...list, domain] })
+      await renderCurate()
+    })
+  })
 }
 
 function renderTrending (list) {
@@ -169,6 +182,7 @@ function renderTrending (list) {
       </div>
       <div class="dc-pending-actions">
         <button class="btn btn-sm btn-danger curate-dismiss-trending">dismiss</button>
+        <button class="btn btn-sm btn-danger curate-block-trending">block</button>
       </div>
     </div>`).join('')
 
@@ -178,6 +192,20 @@ function renderTrending (list) {
       const domain = row.dataset.domain
       const res = await api('DELETE', '/api/discover/admin/curate/trending', { domain })
       if (res.error) { alert(res.error); return }
+      await renderCurate()
+    })
+  })
+
+  el.querySelectorAll('.curate-block-trending').forEach(btn => {
+    const row = btn.closest('[data-domain]')
+    btn.addEventListener('click', async () => {
+      const domain = row.dataset.domain
+      const [, blocked] = await Promise.all([
+        api('DELETE', '/api/discover/admin/curate/trending', { domain }),
+        api('GET', '/api/discover/admin/blocked')
+      ])
+      const list = Array.isArray(blocked) ? blocked : []
+      if (!list.includes(domain)) await api('PUT', '/api/discover/admin/blocked', { entries: [...list, domain] })
       await renderCurate()
     })
   })

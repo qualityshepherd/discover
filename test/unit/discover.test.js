@@ -1,5 +1,6 @@
 import { unit as test } from '../testpup.js'
 import { computeFrequency, makeId, computeTags, isClickThrough } from '../../worker/discover.js'
+import { buildCurateCandidates } from '../../worker/discover-cron.js'
 import {
   isBlocked,
   getCurator, saveCurator, deleteCurator, listCurators, addToCuratorIndex,
@@ -284,4 +285,143 @@ test('isClickThrough: false when one post has >100 chars of text', t => {
   const longText = 'a'.repeat(101)
   const posts = [{ content: `<p>${longText}</p>` }, { content: '' }]
   t.falsy(isClickThrough(posts))
+})
+
+// ── buildCurateCandidates ─────────────────────────────────────────────────────
+
+const noProbe = async () => null
+const feedProbe = async () => 'https://found.example.com/feed'
+
+const makeSourceIndex = (urls) => Object.fromEntries(
+  urls.map(url => [makeId(url), { url }])
+)
+
+const makePost = (links) => ({
+  content: links.map(href => `<a href="${href}">link</a>`).join(' ')
+})
+
+const makeFreshData = (entries) => new Map(
+  entries.map(([url, links]) => [url, { posts: [makePost(links)] }])
+)
+
+test('buildCurateCandidates: does nothing with empty freshData', async t => {
+  const kv = makeKv()
+  await buildCurateCandidates(kv, {}, new Map(), noProbe)
+  t.is(await kv.get('discover:curate-candidates', { type: 'json' }), null)
+})
+
+test('buildCurateCandidates: skips domains already in sourceIndex', async t => {
+  const kv = makeKv()
+  const sourceIndex = makeSourceIndex(['https://known.com/feed'])
+  const freshData = makeFreshData([['https://source.com/feed', ['https://known.com/some-post']]])
+  await buildCurateCandidates(kv, sourceIndex, freshData, noProbe)
+  const trending = await kv.get('discover:trending-domains', { type: 'json' })
+  t.falsy((trending || []).find(t => t.domain === 'known.com'))
+})
+
+test('buildCurateCandidates: skips dismissed domains', async t => {
+  const kv = makeKv({ 'discover:dismissed-domains': ['dismissed.com'] })
+  const freshData = makeFreshData([['https://source.com/feed', ['https://dismissed.com/post']]])
+  await buildCurateCandidates(kv, {}, freshData, noProbe)
+  const trending = await kv.get('discover:trending-domains', { type: 'json' })
+  t.falsy((trending || []).find(t => t.domain === 'dismissed.com'))
+})
+
+test('buildCurateCandidates: skips video domains', async t => {
+  const kv = makeKv()
+  const freshData = makeFreshData([['https://source.com/feed', ['https://youtube.com/watch?v=123']]])
+  await buildCurateCandidates(kv, {}, freshData, noProbe)
+  const trending = await kv.get('discover:trending-domains', { type: 'json' })
+  t.falsy((trending || []).find(t => t.domain === 'youtube.com'))
+})
+
+test('buildCurateCandidates: skips social/noise domains', async t => {
+  const kv = makeKv()
+  const freshData = makeFreshData([['https://source.com/feed', ['https://twitter.com/user', 'https://reddit.com/r/foo']]])
+  await buildCurateCandidates(kv, {}, freshData, noProbe)
+  const trending = await kv.get('discover:trending-domains', { type: 'json' })
+  t.falsy((trending || []).find(t => t.domain === 'twitter.com' || t.domain === 'reddit.com'))
+})
+
+test('buildCurateCandidates: skips self-links', async t => {
+  const kv = makeKv()
+  const freshData = makeFreshData([['https://source.com/feed', ['https://source.com/other-post']]])
+  await buildCurateCandidates(kv, {}, freshData, noProbe)
+  const trending = await kv.get('discover:trending-domains', { type: 'json' })
+  t.falsy((trending || []).find(t => t.domain === 'source.com'))
+})
+
+test('buildCurateCandidates: scores by source diversity', async t => {
+  const kv = makeKv()
+  const freshData = makeFreshData([
+    ['https://a.com/feed', ['https://target.com/post']],
+    ['https://b.com/feed', ['https://target.com/post']],
+    ['https://c.com/feed', ['https://target.com/post']]
+  ])
+  await buildCurateCandidates(kv, {}, freshData, noProbe)
+  const trending = await kv.get('discover:trending-domains', { type: 'json' })
+  const entry = (trending || []).find(t => t.domain === 'target.com')
+  t.ok(entry)
+  t.is(entry.score, 3)
+  t.is(entry.sources.length, 3)
+})
+
+test('buildCurateCandidates: probe returning feed url goes to candidates', async t => {
+  const kv = makeKv()
+  const freshData = makeFreshData([['https://source.com/feed', ['https://newblog.com/post']]])
+  await buildCurateCandidates(kv, {}, freshData, feedProbe)
+  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
+  const entry = (candidates || []).find(c => c.domain === 'newblog.com')
+  t.ok(entry)
+  t.is(entry.feedUrl, 'https://found.example.com/feed')
+})
+
+test('buildCurateCandidates: probe returning null goes to trending', async t => {
+  const kv = makeKv()
+  const freshData = makeFreshData([['https://source.com/feed', ['https://newblog.com/post']]])
+  await buildCurateCandidates(kv, {}, freshData, noProbe)
+  const trending = await kv.get('discover:trending-domains', { type: 'json' })
+  t.ok((trending || []).find(t => t.domain === 'newblog.com'))
+})
+
+test('buildCurateCandidates: limits new probes to 3', async t => {
+  const kv = makeKv()
+  const domains = ['alpha.com', 'beta.com', 'gamma.com', 'delta.com', 'epsilon.com']
+  const freshData = makeFreshData(
+    domains.map(d => [`https://src-${d}/feed`, [`https://${d}/post`]])
+  )
+  await buildCurateCandidates(kv, {}, freshData, noProbe)
+  const trending = await kv.get('discover:trending-domains', { type: 'json' })
+  t.is((trending || []).length, 3)
+})
+
+test('buildCurateCandidates: updates score for existing candidate', async t => {
+  const kv = makeKv({
+    'discover:curate-candidates': [{ domain: 'known.com', feedUrl: 'https://known.com/feed', score: 1, sources: ['https://old.com/feed'] }]
+  })
+  const freshData = makeFreshData([
+    ['https://new1.com/feed', ['https://known.com/post']],
+    ['https://new2.com/feed', ['https://known.com/post']]
+  ])
+  await buildCurateCandidates(kv, {}, freshData, noProbe)
+  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
+  const entry = (candidates || []).find(c => c.domain === 'known.com')
+  t.ok(entry)
+  t.is(entry.score, 2)
+})
+
+test('buildCurateCandidates: updates score for existing trending entry', async t => {
+  const kv = makeKv({
+    'discover:trending-domains': [{ domain: 'trend.com', score: 2, sources: ['https://a.com/feed', 'https://b.com/feed'] }]
+  })
+  const freshData = makeFreshData([
+    ['https://c.com/feed', ['https://trend.com/post']],
+    ['https://d.com/feed', ['https://trend.com/post']],
+    ['https://e.com/feed', ['https://trend.com/post']]
+  ])
+  await buildCurateCandidates(kv, {}, freshData, noProbe)
+  const trending = await kv.get('discover:trending-domains', { type: 'json' })
+  const entry = (trending || []).find(t => t.domain === 'trend.com')
+  t.ok(entry)
+  t.is(entry.score, 3)
 })

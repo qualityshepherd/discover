@@ -200,7 +200,7 @@ const probeFeedUrl = async (domain) => {
   return null
 }
 
-export const buildCurateCandidates = async (kv, sourceIndex, freshData) => {
+export const buildCurateCandidates = async (kv, sourceIndex, freshData, _probe = probeFeedUrl) => {
   if (!freshData.size) return
 
   const knownDomains = new Set()
@@ -260,7 +260,7 @@ export const buildCurateCandidates = async (kv, sourceIndex, freshData) => {
   const newToProbe = scored.filter(({ domain }) => !candidateDomains.has(domain) && !trendingDomains.has(domain)).slice(0, 3)
 
   for (const { domain, score, sources } of newToProbe) {
-    const feedUrl = await probeFeedUrl(domain)
+    const feedUrl = await _probe(domain)
     const entry = { domain, score, sources, firstSeen: now, probedAt: now }
     if (feedUrl) candidates.push({ ...entry, feedUrl })
     else trending.push(entry)

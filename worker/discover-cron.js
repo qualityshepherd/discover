@@ -79,7 +79,7 @@ export const fetchAndSaveSource = async (kv, url) => {
     siteUrl = result.siteUrl || null
   }
   const sourceData = { url, siteUrl, posts, image, statusCode: result.statusCode ?? null, error: result.error || null, lastFetched: new Date(now).toISOString() }
-  const indexEntry = { url, lastFetched: sourceData.lastFetched, statusCode: sourceData.statusCode, error: sourceData.error, hasPosts: posts.length > 0, latestPostUrl: posts[0]?.url || null, image: sourceData.image, frequency: frequency || null, addedAt: new Date(now).toISOString() }
+  const indexEntry = { url, lastFetched: sourceData.lastFetched, statusCode: sourceData.statusCode, error: sourceData.error, hasPosts: posts.length > 0, latestPostUrl: posts[0]?.url || null, latestPostDate: posts[0]?.date || null, image: sourceData.image, frequency: frequency || null, addedAt: new Date(now).toISOString() }
   await saveSourceData(kv, url, sourceData)
   return { sourceData, indexEntry }
 }
@@ -321,7 +321,7 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
         await saveSourceData(kv, url, data)
         freshData.set(url, data)
       }
-      sourceIndex[hash] = { ...entry, url, lastFetched: new Date(now).toISOString(), statusCode: result.statusCode, error: null, hasPosts: posts.length > 0, latestPostUrl, image, frequency: frequency || entry.frequency || null, addedAt: entry.addedAt || new Date(now).toISOString() }
+      sourceIndex[hash] = { ...entry, url, lastFetched: new Date(now).toISOString(), statusCode: result.statusCode, error: null, hasPosts: posts.length > 0, latestPostUrl, latestPostDate: posts[0]?.date || entry.latestPostDate || null, image, frequency: frequency || entry.frequency || null, addedAt: entry.addedAt || new Date(now).toISOString() }
     } else {
       // fetch failed — update index only, leave sourceData untouched
       sourceIndex[hash] = { ...entry, url, lastFetched: new Date(now).toISOString(), statusCode: result.statusCode ?? 0, error: result.error || null, addedAt: entry.addedAt || new Date(now).toISOString() }

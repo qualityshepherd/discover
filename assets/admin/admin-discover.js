@@ -85,10 +85,18 @@ export async function renderDcEntries () {
   await renderDcSources()
 }
 
+const DEAD_MS = 18 * 30.5 * 24 * 60 * 60 * 1000
+const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString('en', { month: 'short', year: 'numeric' }) : null
+
 const sourceStatusDot = (s) => {
   if (!s.lastFetched) return '<span class="status-dot status-null" title="never fetched"></span>'
   if (!s.statusCode) return `<span class="status-dot status-error" title="${escHtml(s.error || 'network error')} · ${timeAgo(s.lastFetched)}"></span>`
-  if (s.statusCode === 200 && s.frequency === 'inactive') return `<span class="status-dot status-inactive" title="inactive · ${timeAgo(s.lastFetched)}"></span>`
+  if (s.statusCode === 200 && s.frequency === 'inactive') {
+    const postDate = s.latestPostDate ? new Date(s.latestPostDate) : null
+    const isDead = postDate && (Date.now() - postDate.getTime() > DEAD_MS)
+    const dateStr = fmtDate(s.latestPostDate) || 'unknown'
+    return `<span class="status-dot ${isDead ? 'status-dead' : 'status-inactive'}" title="inactive · last post ${dateStr}"></span>`
+  }
   const cls = s.statusCode === 200 ? 'status-ok' : s.statusCode < 500 ? 'status-warn' : 'status-error'
   const ago = timeAgo(s.lastFetched)
   const tip = s.statusCode === 200 ? (s.hasPosts ? `200 OK · ${ago}` : `200 — no posts · ${ago}`) : `${s.statusCode} · ${ago}`

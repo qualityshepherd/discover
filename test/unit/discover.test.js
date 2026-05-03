@@ -378,7 +378,10 @@ test('buildCurateCandidates: probe returning feed url goes to candidates', async
 
 test('buildCurateCandidates: probe returning null goes to trending', async t => {
   const kv = makeKv()
-  const freshData = makeFreshData([['https://source.com/feed', ['https://newblog.com/post']]])
+  const freshData = makeFreshData([
+    ['https://source1.com/feed', ['https://newblog.com/post']],
+    ['https://source2.com/feed', ['https://newblog.com/other']]
+  ])
   await buildCurateCandidates(kv, {}, freshData, noProbe)
   const trending = await kv.get('discover:trending-domains', { type: 'json' })
   t.ok((trending || []).find(t => t.domain === 'newblog.com'))
@@ -387,8 +390,12 @@ test('buildCurateCandidates: probe returning null goes to trending', async t => 
 test('buildCurateCandidates: limits new probes to 3', async t => {
   const kv = makeKv()
   const domains = ['alpha.com', 'beta.com', 'gamma.com', 'delta.com', 'epsilon.com']
+  // each domain linked from 2 sources so all clear the score >= 2 threshold
   const freshData = makeFreshData(
-    domains.map(d => [`https://src-${d}/feed`, [`https://${d}/post`]])
+    domains.flatMap(d => [
+      [`https://src1-${d}/feed`, [`https://${d}/post`]],
+      [`https://src2-${d}/feed`, [`https://${d}/other`]]
+    ])
   )
   await buildCurateCandidates(kv, {}, freshData, noProbe)
   const trending = await kv.get('discover:trending-domains', { type: 'json' })

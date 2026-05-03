@@ -949,18 +949,18 @@ export const handleDiscover = async (req, env) => {
   if (method === 'GET' && path === '/api/discover/admin/blocked') return handleBlockedList(kv)
   if (method === 'PUT' && path === '/api/discover/admin/blocked') return handleBlockedSave(req, kv)
   if (method === 'POST' && path === '/api/discover/admin/build-curate-candidates') {
-    const sourceIndex = await getSourceIndex(kv)
-    const allSourceUrls = [...new Set((await getFeeds(kv) || []).flatMap(f => f.sources || []))]
-    const sourceDatas = await Promise.all(allSourceUrls.map(u => getSourceData(kv, u)))
-    const freshData = new Map(allSourceUrls.map((u, i) => [u, sourceDatas[i]]).filter(([, d]) => d))
+    const [sourceIndex, sourceAll, feeds] = await Promise.all([getSourceIndex(kv), kv.get('source:all', { type: 'json' }), getFeeds(kv)])
+    const allSourceUrls = [...new Set((feeds || []).flatMap(f => f.sources || []))]
+    const src = sourceAll || {}
+    const freshData = new Map(allSourceUrls.map(u => [u, src[makeId(u)]]).filter(([, d]) => d))
     await buildCurateCandidates(kv, sourceIndex, freshData)
     return json({ ok: true, sources: freshData.size })
   }
   if (method === 'POST' && path === '/api/discover/admin/build-link-graph') {
-    const sourceIndex = await getSourceIndex(kv)
-    const allSourceUrls = [...new Set((await getFeeds(kv) || []).flatMap(f => f.sources || []))]
-    const sourceDatas = await Promise.all(allSourceUrls.map(u => getSourceData(kv, u)))
-    const freshData = new Map(allSourceUrls.map((u, i) => [u, sourceDatas[i]]).filter(([, d]) => d))
+    const [sourceIndex, sourceAll, feeds] = await Promise.all([getSourceIndex(kv), kv.get('source:all', { type: 'json' }), getFeeds(kv)])
+    const allSourceUrls = [...new Set((feeds || []).flatMap(f => f.sources || []))]
+    const src = sourceAll || {}
+    const freshData = new Map(allSourceUrls.map(u => [u, src[makeId(u)]]).filter(([, d]) => d))
     await buildLinkGraph(kv, sourceIndex, freshData)
     return json({ ok: true, sources: freshData.size })
   }

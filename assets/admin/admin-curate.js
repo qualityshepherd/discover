@@ -168,6 +168,7 @@ function renderCandidates (list) {
 }
 
 function renderTrending (list) {
+  list = list.filter(t => t.score >= 2)
   const el = $('curate-trending-list')
   const countEl = $('curate-trending-count')
   if (countEl) countEl.textContent = list.length ? `(${list.length})` : ''

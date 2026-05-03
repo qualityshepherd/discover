@@ -247,8 +247,8 @@ const loadNew = async () => {
     const frag = document.createElement('div')
     frag.innerHTML = batch.map(feedsItemTemplate).join('')
     cards.insertBefore(frag, sentinel)
-    injectSourceFollowButtons(cards)
-    injectMentionsLinks(cards, mentionCounts)
+    injectSourceFollowButtons(frag)
+    injectMentionsLinks(frag, mentionCounts)
     rendered += batch.length
   }
 

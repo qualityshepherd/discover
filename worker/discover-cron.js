@@ -271,7 +271,7 @@ export const buildCurateCandidates = async (kv, sourceIndex, freshData, _probe =
 
   await Promise.all([
     kv.put('discover:curate-candidates', JSON.stringify(candidates.slice(0, 50))),
-    kv.put('discover:trending-domains', JSON.stringify(trending.slice(0, 50)))
+    kv.put('discover:trending-domains', JSON.stringify(trending.filter(t => t.score >= 2).slice(0, 50)))
   ])
 }
 

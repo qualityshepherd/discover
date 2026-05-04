@@ -13,9 +13,9 @@ Anyone can fork this, stand up their own instance, and curate their own playlist
 - **Browse** — curated playlists with tag filtering, search, random shuffle, and a "new" view of recently-added sources
 - **Feed** — follow playlists or individual sources, read posts inline, export/import OPML, add any RSS URL directly
 - **Suggest a feed** — public submission form on `/about`; server-side validation rejects click-through and invalid feeds before they hit the queue
-- **Webmentions via RSS** — when sources in the directory link to each other, the cited author gets a mention feed at `/api/mentions/{id}.xml`. Delivered the same way authors read everything else: their RSS reader
+- **Webmentions via RSS** — when sources in the directory link to each other, the cited author gets a mention feed at `/api/mentions/{domain}.xml` (e.g. `/api/mentions/gordonmclean.co.uk.xml`). Delivered the same way authors read everything else: their RSS reader
 - **PWA** — installable, dark/light theme, works offline for cached views
-- **Analytics** — privacy-friendly, no third parties. Tracks hits, top paths, countries, and RSS playlist subscribers. No cookies, no JS fingerprinting
+- **Analytics** — privacy-friendly, no third parties. Tracks hits, top paths, countries, and RSS feed subscribers. No cookies, no JS fingerprinting
 
 ## Requirements
 
@@ -48,7 +48,7 @@ Go to `/admin`, enter a passphrase, copy your pubkey, paste it into `wrangler.to
 
 - **Playlists** — create and edit themed groups of RSS sources
 - **Sources** — add RSS/Atom feed URLs; the cron fetches on a rolling schedule (8–48h depending on post frequency) and builds the link graph for webmentions
-- **Pending** — review suggested feeds; approve into a playlist or reject
+- **Curate** — review suggested feeds, feed candidates mined from link content, and trending domains; approve, dismiss, or block. Includes a scan button to rebuild candidates from all sources and a rebuild button to regenerate the webmentions graph
 - **Batch validate** — paste multiple URLs, validate in bulk, add directly or queue to pending
 - **Blocked domains** — hostname blocklist; exact match or subdomain (`example.com` blocks `sub.example.com` but not `notexample.com`)
 - **Analytics** — hit counts, top paths, countries

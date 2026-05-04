@@ -15,6 +15,19 @@ if (btn) {
   })
 }
 
+const mentionsBtn = document.getElementById('btn-rebuild-mentions')
+if (mentionsBtn) {
+  mentionsBtn.addEventListener('click', async () => {
+    mentionsBtn.disabled = true
+    mentionsBtn.textContent = 'rebuilding…'
+    if (scanStatus) scanStatus.textContent = ''
+    const res = await api('POST', '/api/discover/admin/build-link-graph')
+    mentionsBtn.disabled = false
+    mentionsBtn.textContent = 'rebuild mentions'
+    if (scanStatus) scanStatus.textContent = res.error ? `error: ${res.error}` : `rebuilt mentions from ${res.sources} sources`
+  })
+}
+
 export async function updateCurateBadge () {
   const data = await api('GET', '/api/discover/admin/curate')
   const count = (data?.pending?.length || 0) + (data?.candidates?.length || 0)

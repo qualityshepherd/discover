@@ -70,8 +70,12 @@ const handleList = async (kv, url) => {
   const hasNew = Object.values(sourceIndex).some(s => s.addedAt && new Date(s.addedAt).getTime() > cutoff)
 
   const mentionCounts = {}
-  for (const [hash, entry] of Object.entries(sourceIndex)) {
-    if (entry.mentionCount) mentionCounts[hash] = entry.mentionCount
+  for (const entry of Object.values(sourceIndex)) {
+    if (!entry.mentionCount) continue
+    try {
+      const domain = new URL(entry.url).hostname.replace(/^www\./, '')
+      mentionCounts[domain] = Math.max(mentionCounts[domain] || 0, entry.mentionCount)
+    } catch {}
   }
 
   const body = JSON.stringify({ feeds: sorted, tags: computeTags(allFeeds), hasNew, mentionCounts })
@@ -697,13 +701,9 @@ const handleBlockedSave = async (req, kv) => {
 
 // GET /api/mentions/:sourceId.xml — RSS feed of posts from other discover sources linking to this source
 export const handleMentionsFeed = async (kv, sourceId, reqUrl) => {
-  const [mentions, sourceIndex] = await Promise.all([
-    kv.get(`mentions:${sourceId}`, { type: 'json' }),
-    getSourceIndex(kv)
-  ])
+  const mentions = await kv.get(`mentions:${sourceId}`, { type: 'json' })
   const items = mentions || []
-  const sourceEntry = Object.values(sourceIndex).find(s => makeId(s.url) === sourceId)
-  const domain = sourceEntry ? (() => { try { return new URL(sourceEntry.url).hostname } catch { return sourceId } })() : sourceId
+  const domain = sourceId
   const base = new URL(reqUrl).origin
 
   const rssItems = items.map(m => `
@@ -949,18 +949,18 @@ export const handleDiscover = async (req, env) => {
   if (method === 'GET' && path === '/api/discover/admin/blocked') return handleBlockedList(kv)
   if (method === 'PUT' && path === '/api/discover/admin/blocked') return handleBlockedSave(req, kv)
   if (method === 'POST' && path === '/api/discover/admin/build-curate-candidates') {
-    const [sourceIndex, sourceAll, feeds] = await Promise.all([getSourceIndex(kv), kv.get('source:all', { type: 'json' }), getFeeds(kv)])
+    const [sourceIndex, feeds] = await Promise.all([getSourceIndex(kv), getFeeds(kv)])
     const allSourceUrls = [...new Set((feeds || []).flatMap(f => f.sources || []))]
-    const src = sourceAll || {}
-    const freshData = new Map(allSourceUrls.map(u => [u, src[makeId(u)]]).filter(([, d]) => d))
+    const sourceAll = await resolveSourceAll(kv, allSourceUrls)
+    const freshData = new Map(allSourceUrls.map(u => [u, sourceAll[makeId(u)]]).filter(([, d]) => d))
     await buildCurateCandidates(kv, sourceIndex, freshData)
     return json({ ok: true, sources: freshData.size })
   }
   if (method === 'POST' && path === '/api/discover/admin/build-link-graph') {
-    const [sourceIndex, sourceAll, feeds] = await Promise.all([getSourceIndex(kv), kv.get('source:all', { type: 'json' }), getFeeds(kv)])
+    const [sourceIndex, feeds] = await Promise.all([getSourceIndex(kv), getFeeds(kv)])
     const allSourceUrls = [...new Set((feeds || []).flatMap(f => f.sources || []))]
-    const src = sourceAll || {}
-    const freshData = new Map(allSourceUrls.map(u => [u, src[makeId(u)]]).filter(([, d]) => d))
+    const sourceAll = await resolveSourceAll(kv, allSourceUrls)
+    const freshData = new Map(allSourceUrls.map(u => [u, sourceAll[makeId(u)]]).filter(([, d]) => d))
     await buildLinkGraph(kv, sourceIndex, freshData)
     return json({ ok: true, sources: freshData.size })
   }

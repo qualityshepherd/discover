@@ -108,7 +108,17 @@ export const buildLinkGraph = async (kv, sourceIndex, freshData) => {
     } catch {}
   }
 
-  const byTarget = new Map() // targetHash → mention[]
+  // domain → all sourceIndex hashes for that domain (for mentionCount updates)
+  const domainToHashes = new Map()
+  for (const [hash, entry] of Object.entries(sourceIndex)) {
+    try {
+      const d = new URL(entry.url).hostname.replace(/^www\./, '')
+      if (!domainToHashes.has(d)) domainToHashes.set(d, [])
+      domainToHashes.get(d).push(hash)
+    } catch {}
+  }
+
+  const byTarget = new Map() // targetDomainHash → mention[]
 
   for (const [sourceUrl, data] of freshData) {
     if (!data?.posts?.length) continue
@@ -124,10 +134,9 @@ export const buildLinkGraph = async (kv, sourceIndex, freshData) => {
           const domain = new URL(href).hostname.replace(/^www\./, '')
           if (domain === fromDomain) continue // skip self-links
           if (VIDEO_DOMAINS.has(domain)) continue // skip youtube
-          const targetUrl = domainToSource.get(domain)
-          if (!targetUrl) continue // only include discover sources
-          const targetHash = makeId(targetUrl)
-          if (targetHash === fromHash) continue
+          if (!domainToSource.get(domain)) continue // only include discover sources
+          if (domain === fromDomain) continue
+          const targetHash = domain
           const dedupeKey = `${fromHash}:${post.url}:${targetHash}`
           if (seenInPost.has(dedupeKey)) continue
           seenInPost.add(dedupeKey)
@@ -157,9 +166,10 @@ export const buildLinkGraph = async (kv, sourceIndex, freshData) => {
       .sort((a, b) => new Date(b.foundAt) - new Date(a.foundAt))
       .slice(0, 100)
     await kv.put(`mentions:${targetHash}`, JSON.stringify(updated))
-    if (sourceIndex[targetHash]) {
-      sourceIndex[targetHash].mentionCount = updated.length
-      indexDirty = true
+    // update mentionCount on all sourceIndex entries for this domain
+    const hashes = domainToHashes.get(targetHash) || []
+    for (const h of hashes) {
+      if (sourceIndex[h]) { sourceIndex[h].mentionCount = updated.length; indexDirty = true }
     }
   }))
 

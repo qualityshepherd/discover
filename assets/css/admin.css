@@ -238,6 +238,7 @@ label { display: block; font-size: 0.85rem; color: var(--color-text-muted); marg
 .a-nav a { color: var(--color-text-muted); cursor: pointer; font-size: 1rem; }
 .a-nav a:hover, .a-nav a.active { color: var(--color-accent); }
 .view-header .a-nav { margin: 0; }
+.view-header-actions { display: flex; gap: var(--s3); }
 .a-stats { display: flex; gap: var(--s6) var(--s8); margin-bottom: var(--s8); flex-wrap: wrap; }
 .a-stat .a-val { font-size: 2.6rem; font-weight: 600; color: var(--color-text-secondary); line-height: 1; }
 .a-stat .a-lbl { font-size: 0.8rem; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.1em; margin-top: 4px; }

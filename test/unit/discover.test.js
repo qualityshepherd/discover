@@ -315,40 +315,40 @@ test('buildCurateCandidates: skips domains already in sourceIndex', async t => {
   const sourceIndex = makeSourceIndex(['https://known.com/feed'])
   const freshData = makeFreshData([['https://source.com/feed', ['https://known.com/some-post']]])
   await buildCurateCandidates(kv, sourceIndex, freshData, noProbe)
-  const trending = await kv.get('discover:trending-domains', { type: 'json' })
-  t.falsy((trending || []).find(t => t.domain === 'known.com'))
+  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
+  t.falsy((candidates || []).find(c => c.domain === 'known.com'))
 })
 
 test('buildCurateCandidates: skips dismissed domains', async t => {
   const kv = makeKv({ 'discover:dismissed-domains': ['dismissed.com'] })
   const freshData = makeFreshData([['https://source.com/feed', ['https://dismissed.com/post']]])
   await buildCurateCandidates(kv, {}, freshData, noProbe)
-  const trending = await kv.get('discover:trending-domains', { type: 'json' })
-  t.falsy((trending || []).find(t => t.domain === 'dismissed.com'))
+  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
+  t.falsy((candidates || []).find(c => c.domain === 'dismissed.com'))
 })
 
 test('buildCurateCandidates: skips video domains', async t => {
   const kv = makeKv()
   const freshData = makeFreshData([['https://source.com/feed', ['https://youtube.com/watch?v=123']]])
   await buildCurateCandidates(kv, {}, freshData, noProbe)
-  const trending = await kv.get('discover:trending-domains', { type: 'json' })
-  t.falsy((trending || []).find(t => t.domain === 'youtube.com'))
+  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
+  t.falsy((candidates || []).find(c => c.domain === 'youtube.com'))
 })
 
 test('buildCurateCandidates: skips social/noise domains', async t => {
   const kv = makeKv()
   const freshData = makeFreshData([['https://source.com/feed', ['https://twitter.com/user', 'https://reddit.com/r/foo']]])
   await buildCurateCandidates(kv, {}, freshData, noProbe)
-  const trending = await kv.get('discover:trending-domains', { type: 'json' })
-  t.falsy((trending || []).find(t => t.domain === 'twitter.com' || t.domain === 'reddit.com'))
+  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
+  t.falsy((candidates || []).find(c => c.domain === 'twitter.com' || c.domain === 'reddit.com'))
 })
 
 test('buildCurateCandidates: skips self-links', async t => {
   const kv = makeKv()
   const freshData = makeFreshData([['https://source.com/feed', ['https://source.com/other-post']]])
   await buildCurateCandidates(kv, {}, freshData, noProbe)
-  const trending = await kv.get('discover:trending-domains', { type: 'json' })
-  t.falsy((trending || []).find(t => t.domain === 'source.com'))
+  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
+  t.falsy((candidates || []).find(c => c.domain === 'source.com'))
 })
 
 test('buildCurateCandidates: scores by source diversity', async t => {
@@ -358,9 +358,9 @@ test('buildCurateCandidates: scores by source diversity', async t => {
     ['https://b.com/feed', ['https://target.com/post']],
     ['https://c.com/feed', ['https://target.com/post']]
   ])
-  await buildCurateCandidates(kv, {}, freshData, noProbe)
-  const trending = await kv.get('discover:trending-domains', { type: 'json' })
-  const entry = (trending || []).find(t => t.domain === 'target.com')
+  await buildCurateCandidates(kv, {}, freshData, feedProbe)
+  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
+  const entry = (candidates || []).find(c => c.domain === 'target.com')
   t.ok(entry)
   t.is(entry.score, 3)
   t.is(entry.sources.length, 3)
@@ -376,30 +376,18 @@ test('buildCurateCandidates: probe returning feed url goes to candidates', async
   t.is(entry.feedUrl, 'https://found.example.com/feed')
 })
 
-test('buildCurateCandidates: probe returning null goes to trending', async t => {
-  const kv = makeKv()
-  const freshData = makeFreshData([
-    ['https://source1.com/feed', ['https://newblog.com/post']],
-    ['https://source2.com/feed', ['https://newblog.com/other']]
-  ])
-  await buildCurateCandidates(kv, {}, freshData, noProbe)
-  const trending = await kv.get('discover:trending-domains', { type: 'json' })
-  t.ok((trending || []).find(t => t.domain === 'newblog.com'))
-})
-
 test('buildCurateCandidates: limits new probes to 3', async t => {
   const kv = makeKv()
   const domains = ['alpha.com', 'beta.com', 'gamma.com', 'delta.com', 'epsilon.com']
-  // each domain linked from 2 sources so all clear the score >= 2 threshold
   const freshData = makeFreshData(
     domains.flatMap(d => [
       [`https://src1-${d}/feed`, [`https://${d}/post`]],
       [`https://src2-${d}/feed`, [`https://${d}/other`]]
     ])
   )
-  await buildCurateCandidates(kv, {}, freshData, noProbe)
-  const trending = await kv.get('discover:trending-domains', { type: 'json' })
-  t.is((trending || []).length, 3)
+  await buildCurateCandidates(kv, {}, freshData, feedProbe)
+  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
+  t.is((candidates || []).length, 3)
 })
 
 test('buildCurateCandidates: updates score for existing candidate', async t => {
@@ -415,20 +403,4 @@ test('buildCurateCandidates: updates score for existing candidate', async t => {
   const entry = (candidates || []).find(c => c.domain === 'known.com')
   t.ok(entry)
   t.is(entry.score, 2)
-})
-
-test('buildCurateCandidates: updates score for existing trending entry', async t => {
-  const kv = makeKv({
-    'discover:trending-domains': [{ domain: 'trend.com', score: 2, sources: ['https://a.com/feed', 'https://b.com/feed'] }]
-  })
-  const freshData = makeFreshData([
-    ['https://c.com/feed', ['https://trend.com/post']],
-    ['https://d.com/feed', ['https://trend.com/post']],
-    ['https://e.com/feed', ['https://trend.com/post']]
-  ])
-  await buildCurateCandidates(kv, {}, freshData, noProbe)
-  const trending = await kv.get('discover:trending-domains', { type: 'json' })
-  const entry = (trending || []).find(t => t.domain === 'trend.com')
-  t.ok(entry)
-  t.is(entry.score, 3)
 })

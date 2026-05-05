@@ -42,7 +42,7 @@ export async function renderCurate () {
     api('GET', '/api/discover/admin/curate'),
     api('GET', '/api/discover/admin/feeds')
   ])
-  const { pending = [], candidates = [], trending = [] } = data || {}
+  const { pending = [], candidates = [] } = data || {}
   const playlists = (feedsData?.feeds || []).sort((a, b) => a.title.localeCompare(b.title))
 
   const count = pending.length + candidates.length
@@ -54,7 +54,6 @@ export async function renderCurate () {
 
   renderPending(pending, playlists)
   renderCandidates(candidates)
-  renderTrending(trending)
   await renderBlocked()
 }
 
@@ -171,51 +170,6 @@ function renderCandidates (list) {
       const domain = row.dataset.domain
       const [, blocked] = await Promise.all([
         api('DELETE', '/api/discover/admin/curate/candidate', { domain }),
-        api('GET', '/api/discover/admin/blocked')
-      ])
-      const list = Array.isArray(blocked) ? blocked : []
-      if (!list.includes(domain)) await api('PUT', '/api/discover/admin/blocked', { entries: [...list, domain] })
-      await renderCurate()
-    })
-  })
-}
-
-function renderTrending (list) {
-  list = list.filter(t => t.score >= 2)
-  const el = $('curate-trending-list')
-  const countEl = $('curate-trending-count')
-  if (countEl) countEl.textContent = list.length ? `(${list.length})` : ''
-  if (!el) return
-  if (!list.length) { el.innerHTML = '<p class="muted" style="font-size:var(--text-sm)">no trending domains yet.</p>'; return }
-
-  el.innerHTML = list.map(t => `
-    <div class="dc-pending-row" data-domain="${escHtml(t.domain)}">
-      <div class="dc-pending-url">
-        <a href="https://${escHtml(t.domain)}" target="_blank" rel="noopener">${escHtml(t.domain)}</a>
-        <span class="dc-badge">${t.score} source${t.score !== 1 ? 's' : ''}</span>
-      </div>
-      <div class="dc-pending-actions">
-        <button class="btn btn-sm btn-danger curate-dismiss-trending">dismiss</button>
-        <button class="btn btn-sm btn-danger curate-block-trending">block</button>
-      </div>
-    </div>`).join('')
-
-  el.querySelectorAll('.curate-dismiss-trending').forEach(btn => {
-    const row = btn.closest('[data-domain]')
-    btn.addEventListener('click', async () => {
-      const domain = row.dataset.domain
-      const res = await api('DELETE', '/api/discover/admin/curate/trending', { domain })
-      if (res.error) { alert(res.error); return }
-      await renderCurate()
-    })
-  })
-
-  el.querySelectorAll('.curate-block-trending').forEach(btn => {
-    const row = btn.closest('[data-domain]')
-    btn.addEventListener('click', async () => {
-      const domain = row.dataset.domain
-      const [, blocked] = await Promise.all([
-        api('DELETE', '/api/discover/admin/curate/trending', { domain }),
         api('GET', '/api/discover/admin/blocked')
       ])
       const list = Array.isArray(blocked) ? blocked : []

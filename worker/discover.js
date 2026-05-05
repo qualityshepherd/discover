@@ -192,11 +192,10 @@ const handleFeed = async (kv, req) => {
   const feeds = (await Promise.all(ids.map(id => getFeed(kv, id)))).filter(Boolean)
   const allSourceUrls = [...new Set([...feeds.flatMap(f => f.sources || []), ...sourceUrls])]
 
-  const sourceAll = await resolveSourceAll(kv, allSourceUrls)
+  const sourceDatas = await Promise.all(allSourceUrls.map(u => getSourceData(kv, u)))
 
   const seen = new Set()
-  const posts = allSourceUrls
-    .map(u => sourceAll[makeId(u)])
+  const posts = sourceDatas
     .filter(Boolean)
     .flatMap(s => s.posts || [])
     .filter(p => { if (!p.url || seen.has(p.url)) return false; seen.add(p.url); return true })
@@ -248,11 +247,17 @@ const handleNew = async (kv) => {
   const [feeds, sourceAll] = await Promise.all([getFeeds(kv) || [], kv.get('source:all', { type: 'json' })])
   const allSourceUrls = [...new Set((feeds).flatMap(f => f.sources || []))]
   const src = sourceAll || {}
+  const urlToPlaylist = new Map()
+  for (const f of feeds) {
+    for (const u of (f.sources || [])) {
+      if (!urlToPlaylist.has(u)) urlToPlaylist.set(u, { title: f.title, id: f.id })
+    }
+  }
   const posts = allSourceUrls
     .map(url => {
       const data = src[makeId(url)]
       if (!data?.posts?.length) return null
-      const playlist = feeds.find(f => (f.sources || []).includes(url))
+      const playlist = urlToPlaylist.get(url)
       return {
         ...data.posts[0],
         fromPlaylist: playlist?.title || new URL(url).hostname,
@@ -779,12 +784,11 @@ const handleAllOpml = async (kv) => {
 
 // GET /api/discover/admin/curate
 const handleCurateGet = async (kv) => {
-  const [pending, candidates, trending] = await Promise.all([
+  const [pending, candidates] = await Promise.all([
     getPending(kv),
-    kv.get('discover:curate-candidates', { type: 'json' }),
-    kv.get('discover:trending-domains', { type: 'json' })
+    kv.get('discover:curate-candidates', { type: 'json' })
   ])
-  return json({ pending: pending || [], candidates: candidates || [], trending: trending || [] })
+  return json({ pending: pending || [], candidates: candidates || [] })
 }
 
 // POST /api/discover/admin/curate/approve — move candidate to pending
@@ -813,21 +817,6 @@ const handleCurateDismissCandidate = async (req, kv) => {
   ])
   await Promise.all([
     kv.put('discover:curate-candidates', JSON.stringify((candidates || []).filter(c => c.domain !== body.domain))),
-    kv.put('discover:dismissed-domains', JSON.stringify([...new Set([...(dismissed || []), body.domain])]))
-  ])
-  return json({ ok: true })
-}
-
-// DELETE /api/discover/admin/curate/trending
-const handleCurateDismissTrending = async (req, kv) => {
-  const body = await parseJsonBody(req)
-  if (!body?.domain) return json({ error: 'domain required' }, 400)
-  const [trending, dismissed] = await Promise.all([
-    kv.get('discover:trending-domains', { type: 'json' }),
-    kv.get('discover:dismissed-domains', { type: 'json' })
-  ])
-  await Promise.all([
-    kv.put('discover:trending-domains', JSON.stringify((trending || []).filter(t => t.domain !== body.domain))),
     kv.put('discover:dismissed-domains', JSON.stringify([...new Set([...(dismissed || []), body.domain])]))
   ])
   return json({ ok: true })
@@ -924,7 +913,6 @@ export const handleDiscover = async (req, env) => {
   if (method === 'GET' && path === '/api/discover/admin/curate') return handleCurateGet(kv)
   if (method === 'POST' && path === '/api/discover/admin/curate/approve') return handleCurateApprove(req, kv)
   if (method === 'DELETE' && path === '/api/discover/admin/curate/candidate') return handleCurateDismissCandidate(req, kv)
-  if (method === 'DELETE' && path === '/api/discover/admin/curate/trending') return handleCurateDismissTrending(req, kv)
 
   if (method === 'GET' && path === '/api/discover/admin/status') {
     const lastCronOk = await kv.get('cron:lastOk')

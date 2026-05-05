@@ -169,6 +169,7 @@ const loadPlaylist = async (id) => {
   if (!entry) {
     const data = await fetch('/api/discover').then(r => r.json())
     allEntries = data.feeds || []
+    mentionCounts = data.mentionCounts || mentionCounts
     allTags = data.tags || []
     entry = allEntries.find(e => e.id === id)
   }
@@ -200,6 +201,7 @@ const loadPlaylist = async (id) => {
   setFeedContext(posts)
   el.innerHTML = posts.map(feedsItemTemplate).join('')
   injectSourceFollowButtons(el)
+  injectMentionsLinks(el, mentionCounts)
   initModal()
 }
 
@@ -225,10 +227,7 @@ const loadNew = async () => {
   await ensureMentionCounts()
   const posts = await fetch('/api/discover/new').then(r => r.json()).catch(() => [])
   if (!posts.length) { cards.innerHTML = '<p class="muted">no new posts yet.</p>'; return }
-  const withLabel = posts.map(p => ({
-    ...p,
-    feed: { ...p.feed, title: p.feed?.title ? `${p.feed.title} · ${p.fromPlaylist}` : p.fromPlaylist }
-  }))
+  const withLabel = posts
   setFeedContext(withLabel)
   initModal()
 
@@ -269,10 +268,7 @@ const loadRandom = async () => {
   document.getElementById('tag-cloud').innerHTML = ''
   await ensureMentionCounts()
   const posts = await fetch('/api/discover/random').then(r => r.json()).catch(() => [])
-  const withPlaylist = posts.map(p => ({
-    ...p,
-    feed: { ...p.feed, title: p.feed?.title ? `${p.feed.title} · ${p.fromPlaylist}` : p.fromPlaylist }
-  }))
+  const withPlaylist = posts
   cards.innerHTML = withPlaylist.length ? withPlaylist.map(feedsItemTemplate).join('') : '<p class="muted">no posts found.</p>'
   if (withPlaylist.length) { injectSourceFollowButtons(cards); injectMentionsLinks(cards, mentionCounts) }
   setFeedContext(withPlaylist)

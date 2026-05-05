@@ -1,6 +1,7 @@
 import { feedsItemTemplate } from '../src/templates.js'
 import { openModal, initModal, resetModal, setFeedContext, getFeedItem } from '../discover/modal.js'
-import { getFollows, getSourceFollows, hasSourceFollow, toggleSourceFollow, getCustomFeeds, addCustomFeed, hasCustomFeed, clearFollows, clearSourceFollows, clearCustomFeeds, clearFollowedPlaylists } from '../discover/follows.js'
+import { getFollows, getSourceFollows, hasSourceFollow, toggleSourceFollow, syncSourceFollowButtons, injectSourceFollowButtons, getCustomFeeds, addCustomFeed, hasCustomFeed, clearFollows, clearSourceFollows, clearCustomFeeds, clearFollowedPlaylists } from '../discover/follows.js'
+import { injectMentionsLinks } from '../discover/mentions.js'
 
 let allPosts = []
 
@@ -36,8 +37,6 @@ const renderPosts = () => {
   let rendered = 0
   container.innerHTML = ''
 
-  // sentinel sits at the bottom; items are inserted before it so it stays at
-  // the end. IntersectionObserver fires when it enters the viewport to load the next batch.
   const sentinel = document.createElement('div')
   container.appendChild(sentinel)
 
@@ -46,6 +45,8 @@ const renderPosts = () => {
     if (!batch.length) return
     const frag = document.createElement('div')
     frag.innerHTML = batch.map(p => feedsItemTemplate({ ...p, fromPlaylist: null, fromPlaylistId: null })).join('')
+    injectSourceFollowButtons(frag)
+    injectMentionsLinks(frag, {})
     container.insertBefore(frag, sentinel)
     rendered += batch.length
   }
@@ -99,6 +100,12 @@ const load = async () => {
 }
 
 document.getElementById('feed-posts').addEventListener('click', e => {
+  const sourceFollowBtn = e.target.closest('.btn-source-follow')
+  if (sourceFollowBtn) {
+    toggleSourceFollow(sourceFollowBtn.dataset.sourceUrl)
+    syncSourceFollowButtons()
+    return
+  }
   const feedOpen = e.target.closest('.feed-open')
   if (!feedOpen) return
   const post = feedOpen.closest('.feed-post')

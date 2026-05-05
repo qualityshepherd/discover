@@ -249,16 +249,11 @@ export const buildCurateCandidates = async (kv, sourceIndex, freshData, _probe =
     .map(([domain, srcs]) => ({ domain, score: srcs.size, sources: [...srcs] }))
     .sort((a, b) => b.score - a.score)
 
-  const [existingCandidates, existingTrending] = await Promise.all([
-    kv.get('discover:curate-candidates', { type: 'json' }),
-    kv.get('discover:trending-domains', { type: 'json' })
-  ])
+  const existingCandidates = await kv.get('discover:curate-candidates', { type: 'json' })
   const candidates = existingCandidates || []
-  const trending = existingTrending || []
   const candidateDomains = new Set(candidates.map(c => c.domain))
-  const trendingDomains = new Set(trending.map(t => t.domain))
 
-  for (const entry of [...candidates, ...trending]) {
+  for (const entry of candidates) {
     const srcs = domainSources.get(entry.domain)
     if (srcs) {
       entry.score = Math.max(entry.score, srcs.size)
@@ -267,22 +262,15 @@ export const buildCurateCandidates = async (kv, sourceIndex, freshData, _probe =
   }
 
   const now = new Date().toISOString()
-  const newToProbe = scored.filter(({ domain }) => !candidateDomains.has(domain) && !trendingDomains.has(domain)).slice(0, 3)
+  const newToProbe = scored.filter(({ domain }) => !candidateDomains.has(domain)).slice(0, 3)
 
   for (const { domain, score, sources } of newToProbe) {
     const feedUrl = await _probe(domain)
-    const entry = { domain, score, sources, firstSeen: now, probedAt: now }
-    if (feedUrl) candidates.push({ ...entry, feedUrl })
-    else trending.push(entry)
+    if (feedUrl) candidates.push({ domain, score, sources, firstSeen: now, probedAt: now, feedUrl })
   }
 
   candidates.sort((a, b) => b.score - a.score)
-  trending.sort((a, b) => b.score - a.score)
-
-  await Promise.all([
-    kv.put('discover:curate-candidates', JSON.stringify(candidates.slice(0, 50))),
-    kv.put('discover:trending-domains', JSON.stringify(trending.filter(t => t.score >= 2).slice(0, 50)))
-  ])
+  await kv.put('discover:curate-candidates', JSON.stringify(candidates.slice(0, 50)))
 }
 
 export const pruneCurators = async (kv) => {
@@ -313,6 +301,7 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
     .slice(0, MAX_FETCHES_PER_RUN)
 
   const freshData = new Map()
+  const allFetchedData = new Map()
 
   for (const { url } of due) {
     const hash = makeId(url)
@@ -327,6 +316,7 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
       const changed = latestPostUrl !== entry.latestPostUrl || image !== entry.image
 
       const data = { url, siteUrl: result.siteUrl || null, posts, image, statusCode: result.statusCode, error: null, lastFetched: new Date(now).toISOString() }
+      allFetchedData.set(url, data)
       if (changed) {
         await saveSourceData(kv, url, data)
         freshData.set(url, data)
@@ -365,9 +355,9 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
   await buildCurateCandidates(kv, sourceIndex, freshData).catch(err => console.error('buildCurateCandidates failed:', err))
   await pruneCurators(kv).catch(err => console.error('pruneCurators failed:', err))
 
-  if (freshData.size) {
+  if (allFetchedData.size) {
     const sourceAll = await kv.get('source:all', { type: 'json' }) || {}
-    for (const [url, data] of freshData) {
+    for (const [url, data] of allFetchedData) {
       sourceAll[makeId(url)] = { url: data.url, posts: data.posts, image: data.image, siteUrl: data.siteUrl }
     }
     await kv.put('source:all', JSON.stringify(sourceAll))

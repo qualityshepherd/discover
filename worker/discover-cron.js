@@ -89,7 +89,7 @@ export const fetchAndSaveSource = async (kv, url) => {
 export const applySourceDatas = (feed, sourceDatas, { keepOnEmpty = false } = {}) => {
   const valid = sourceDatas.filter(Boolean)
   const allPosts = valid.flatMap(s => s.posts || []).sort((a, b) => new Date(b.date) - new Date(a.date))
-  const freshPosts = valid.map(s => s.posts?.[0]).filter(Boolean)
+  const freshPosts = valid.map(s => s.posts?.[0]).filter(Boolean).sort((a, b) => new Date(b.date) - new Date(a.date))
   feed.previewPosts = keepOnEmpty && !freshPosts.length ? (feed.previewPosts || []) : freshPosts
   feed.coverImage = valid.map(s => s.image).find(Boolean) || feed.coverImage || null
   feed.updateFrequency = computeFrequency(allPosts) ?? feed.updateFrequency ?? null

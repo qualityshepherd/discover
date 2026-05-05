@@ -574,7 +574,7 @@ const handlePlaylistSourceAdd = async (req, kv, id) => {
   }
 
   if (sourceData?.posts?.length) {
-    feed.previewPosts = [...(feed.previewPosts || []), sourceData.posts[0]]
+    feed.previewPosts = [...(feed.previewPosts || []), sourceData.posts[0]].sort((a, b) => new Date(b.date) - new Date(a.date))
     if (!feed.coverImage && sourceData.image) feed.coverImage = sourceData.image
   }
 

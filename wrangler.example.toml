@@ -12,9 +12,10 @@ run_worker_first = true
 DOMAIN_NAME = "your.domain.com"
 OWNER = ""  # leave blank — deploy first, go to /admin, derive your pubkey, paste it here, redeploy
 
-[[kv_namespaces]]
-binding = "DISCOVER_KV"
-id = ""  # wrangler kv namespace create DISCOVER_KV
+[[d1_databases]]
+binding = "DISCOVER_DB"
+database_name = "your-d1-database-name"
+database_id = ""  # wrangler d1 create your-d1-database-name
 
 [[durable_objects.bindings]]
 name = "ANALYTICS"
@@ -26,7 +27,7 @@ new_sqlite_classes = ["AnalyticsDO"]
 
 [[r2_buckets]]
 binding = "R2"
-bucket_name = ""  # create a bucket in the Cloudflare dashboard and paste its name here
+bucket_name = ""  # wrangler r2 bucket create your-bucket-name
 
 [triggers]
 crons = ["0,42 * * * *"]

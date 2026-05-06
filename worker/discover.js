@@ -3,14 +3,15 @@ import { json, parseJsonBody } from './utils.js'
 import {
   makeId, computeTags,
   getFeed, saveFeed, getFeeds, addToIndex, removeFromIndex,
-  getSourceIndex, getSourceData, deleteSourceData,
-  KV_SOURCE_INDEX, KV_SOURCE_PREFIX,
-  getPending, getBlocked, isBlocked,
-  KV_PREFIX, KV_PENDING, KV_BLOCKED,
+  getSourceIndex, getSourceData, saveSourceData, deleteSourceData,
+  getSourceAllData,
+  getPending, savePending, getBlocked, saveBlocked, isBlocked,
   getCurator, saveCurator, deleteCurator, listCurators, addToCuratorIndex,
   isCuratorOf, shouldUpdateLastSeen,
-  getUserFeedSlug, setUserFeedSlug, getUserFeed, setUserFeed
-} from './discover-kv.js'
+  getUserFeedSlug, setUserFeedSlug, getUserFeed, setUserFeed,
+  getMentions, getCandidates, saveCandidates, addDismissedDomain,
+  getCronState
+} from './discover-db.js'
 import { checkDiscoverFeeds, computeFrequency, fetchAndSaveSource, applySourceDatas, fetchSource, buildLinkGraph, buildCurateCandidates, VIDEO_DOMAINS, findImage } from './discover-cron.js'
 
 // re-export for worker/index.js and tests
@@ -44,9 +45,9 @@ const toOpml = (feeds) => {
 // public routes
 
 // GET /api/discover — list all approved feeds/playlists
-const handleList = async (kv, url) => {
+const handleList = async (db, url) => {
   const TWO_WEEKS = 14 * 24 * 60 * 60 * 1000
-  const [feeds, sourceIndex] = await Promise.all([getFeeds(kv), getSourceIndex(kv)])
+  const [feeds, sourceIndex] = await Promise.all([getFeeds(db), getSourceIndex(db)])
   const allFeeds = feeds || []
   const tag = url.searchParams.get('tag')
   const q = url.searchParams.get('q')?.toLowerCase()
@@ -85,8 +86,8 @@ const handleList = async (kv, url) => {
 }
 
 // GET /api/discover/:id — preview posts served from KV, populated by cron
-const handlePlaylist = async (kv, id) => {
-  const entry = await getFeed(kv, id)
+const handlePlaylist = async (db, id) => {
+  const entry = await getFeed(db, id)
   if (!entry) return json({ error: 'not found' }, 404)
   const posts = entry.previewPosts || []
   return cors(new Response(JSON.stringify(posts), {
@@ -95,11 +96,11 @@ const handlePlaylist = async (kv, id) => {
 }
 
 // GET /api/discover/:id/rss — RSS feed for a playlist
-const handlePlaylistRss = async (kv, id, reqUrl) => {
-  const entry = await getFeed(kv, id)
+const handlePlaylistRss = async (db, id, reqUrl) => {
+  const entry = await getFeed(db, id)
   if (!entry) return json({ error: 'not found' }, 404)
 
-  const sourceDatas = await Promise.all((entry.sources || []).map(url => getSourceData(kv, url)))
+  const sourceDatas = await Promise.all((entry.sources || []).map(url => getSourceData(db, url)))
   const posts = sourceDatas
     .filter(Boolean)
     .flatMap(s => s.posts || [])
@@ -135,13 +136,13 @@ const handlePlaylistRss = async (kv, id, reqUrl) => {
 }
 
 // GET /api/discover/:id/opml — OPML for a single playlist
-const handleOpml = async (kv, id) => {
+const handleOpml = async (db, id) => {
   let entry
   if (id === 'all') {
-    const feeds = await getFeeds(kv) || []
+    const feeds = await getFeeds(db) || []
     entry = { title: 'discover', sources: feeds.flatMap(f => f.sources || []) }
   } else {
-    entry = await getFeed(kv, id)
+    entry = await getFeed(db, id)
   }
   if (!entry) return json({ error: 'not found' }, 404)
 
@@ -153,46 +154,36 @@ const handleOpml = async (kv, id) => {
   })
 }
 
-// Resolve source data for a list of URLs: try source:all, fall back to individual KV,
-// live-fetch anything still missing (custom OPML feeds never written to KV).
-const resolveSourceAll = async (kv, allSourceUrls) => {
-  const sourceAll = await kv.get('source:all', { type: 'json' }) || {}
+// Resolve source data for a list of URLs from D1, live-fetch anything missing.
+const resolveSourceAll = async (db, allSourceUrls) => {
+  const sourceAll = await getSourceAllData(db, allSourceUrls)
 
-  const missing = allSourceUrls.filter(u => !sourceAll[makeId(u)])
-  if (missing.length) {
-    const fallbacks = await Promise.all(missing.map(u => getSourceData(kv, u)))
-    missing.forEach((u, i) => { if (fallbacks[i]) sourceAll[makeId(u)] = fallbacks[i] })
-  }
-
-  const stillMissing = missing.filter(u => !sourceAll[makeId(u)])
-  if (stillMissing.length) {
-    let cacheUpdated = false
-    for (const url of stillMissing) {
-      const result = await fetchSource(url, 3)
-      if (!result.posts?.length) continue
-      const posts = result.posts.slice(0, 3).map(p => ({
-        title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content
-      }))
-      sourceAll[makeId(url)] = { url, posts, image: findImage(result.posts) || null, siteUrl: result.siteUrl || null }
-      cacheUpdated = true
-    }
-    if (cacheUpdated) await kv.put('source:all', JSON.stringify(sourceAll))
+  const stillMissing = allSourceUrls.filter(u => !sourceAll[makeId(u)])
+  for (const url of stillMissing) {
+    const result = await fetchSource(url, 3)
+    if (!result.posts?.length) continue
+    const posts = result.posts.slice(0, 3).map(p => ({
+      title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content
+    }))
+    const data = { url, posts, image: findImage(result.posts) || null, siteUrl: result.siteUrl || null }
+    sourceAll[makeId(url)] = data
+    await saveSourceData(db, url, { ...data, statusCode: result.statusCode, error: null, lastFetched: new Date().toISOString() })
   }
 
   return sourceAll
 }
 
 // POST /api/discover/feed — merged posts from followed playlists
-const handleFeed = async (kv, req) => {
+const handleFeed = async (db, req) => {
   const body = await parseJsonBody(req)
   const ids = Array.isArray(body?.ids) ? body.ids.filter(Boolean) : []
   const sourceUrls = Array.isArray(body?.sources) ? body.sources.filter(Boolean) : []
   if (!ids.length && !sourceUrls.length) return cors(json({ posts: [] }))
 
-  const feeds = (await Promise.all(ids.map(id => getFeed(kv, id)))).filter(Boolean)
+  const feeds = (await Promise.all(ids.map(id => getFeed(db, id)))).filter(Boolean)
   const allSourceUrls = [...new Set([...feeds.flatMap(f => f.sources || []), ...sourceUrls])]
 
-  const sourceDatas = await Promise.all(allSourceUrls.map(u => getSourceData(kv, u)))
+  const sourceDatas = await Promise.all(allSourceUrls.map(u => getSourceData(db, u)))
 
   const seen = new Set()
   const posts = sourceDatas
@@ -205,9 +196,9 @@ const handleFeed = async (kv, req) => {
 }
 
 // POST /api/discover/feed/opml — OPML of followed playlists' sources
-const handleFeedOpml = async (kv, req) => {
+const handleFeedOpml = async (db, req) => {
   const { ids = [], sources = [] } = await req.json().catch(() => ({}))
-  const feeds = ids.length ? (await Promise.all(ids.map(id => getFeed(kv, id)))).filter(Boolean) : []
+  const feeds = ids.length ? (await Promise.all(ids.map(id => getFeed(db, id)))).filter(Boolean) : []
   if (sources.length) feeds.push({ title: 'followed sources', sources })
   return new Response(toOpml(feeds), {
     headers: {
@@ -218,9 +209,9 @@ const handleFeedOpml = async (kv, req) => {
 }
 
 // GET /api/discover/random — random posts across all playlists, one per source
-const handleRandom = async (kv, url) => {
+const handleRandom = async (db, url) => {
   const n = Math.min(parseInt(url.searchParams.get('n') || '20', 10), 50)
-  const feeds = await getFeeds(kv) || []
+  const feeds = await getFeeds(db) || []
   const posts = []
   for (const feed of feeds) {
     for (const post of (feed.previewPosts || [])) {
@@ -243,10 +234,10 @@ const handleRandom = async (kv, url) => {
 }
 
 // GET /api/discover/new — newest posts across all sources, one per source sorted by date
-const handleNew = async (kv) => {
-  const [feeds, sourceAll] = await Promise.all([getFeeds(kv) || [], kv.get('source:all', { type: 'json' })])
-  const allSourceUrls = [...new Set((feeds).flatMap(f => f.sources || []))]
-  const src = sourceAll || {}
+const handleNew = async (db) => {
+  const feeds = await getFeeds(db) || []
+  const allSourceUrls = [...new Set(feeds.flatMap(f => f.sources || []))]
+  const src = await getSourceAllData(db, allSourceUrls)
   const urlToPlaylist = new Map()
   for (const f of feeds) {
     for (const u of (f.sources || [])) {
@@ -270,7 +261,7 @@ const handleNew = async (kv) => {
 }
 
 // POST /api/discover/preview — fetch a feed URL server-side, return metadata; saves nothing
-const handlePreview = async (req, kv) => {
+const handlePreview = async (req, db) => {
   const origin = req.headers.get('origin') || ''
   const host = new URL(req.url).host
   let originHost; try { originHost = new URL(origin).host } catch { originHost = '' }
@@ -281,20 +272,20 @@ const handlePreview = async (req, kv) => {
   if (!url) return json({ error: 'url required' }, 400)
   if (!URL.canParse(url)) return json({ error: 'invalid url' }, 400)
 
-  // Same-host feeds — serve from KV directly to avoid self-request loop
+  // Same-host feeds — serve from DB directly to avoid self-request loop
   const parsed = new URL(url)
   if (parsed.host === host) {
     const mentionsMatch = parsed.pathname.match(/^\/api\/mentions\/([^/]+)\.xml$/)
     if (mentionsMatch) {
-      const mentions = await kv.get(`mentions:${mentionsMatch[1]}`, { type: 'json' }) || []
+      const mentions = await getMentions(db, mentionsMatch[1])
       const posts = mentions.slice(0, 2).map(m => ({ title: m.fromTitle || m.fromPost, url: m.fromPost, date: m.fromDate, feed: { title: `mentions · ${mentionsMatch[1]}` } }))
       return cors(json({ title: `mentions · ${mentionsMatch[1]}`, image: null, posts, siteUrl: null }))
     }
     const rssMatch = parsed.pathname.match(/^\/api\/discover\/([^/]+)\/rss$/)
     if (!rssMatch) return cors(json({ error: 'use the follow button on the discover page instead' }, 422))
-    const feed = await getFeed(kv, rssMatch[1])
+    const feed = await getFeed(db, rssMatch[1])
     if (!feed) return cors(json({ error: 'playlist not found' }, 422))
-    const sourceDatas = await Promise.all((feed.sources || []).map(u => getSourceData(kv, u)))
+    const sourceDatas = await Promise.all((feed.sources || []).map(u => getSourceData(db, u)))
     const posts = sourceDatas.filter(Boolean).flatMap(s => s.posts || []).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 2).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
     const image = sourceDatas.filter(Boolean).map(s => s.image).find(Boolean) || null
     return cors(json({ title: feed.title, image, posts, siteUrl: null }))
@@ -310,7 +301,7 @@ const handlePreview = async (req, kv) => {
 }
 
 // POST /api/discover/submit — public submission, no auth
-const handleSubmit = async (req, kv) => {
+const handleSubmit = async (req, db) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
 
@@ -321,9 +312,9 @@ const handleSubmit = async (req, kv) => {
   // Always return ok to prevent enumeration — silently drop invalid/blocked/duplicate
   const ok = json({ ok: true })
 
-  if (await isBlocked(kv, [url])) return ok
+  if (await isBlocked(db, [url])) return ok
 
-  const [feeds, pending] = await Promise.all([getFeeds(kv), getPending(kv)])
+  const [feeds, pending] = await Promise.all([getFeeds(db), getPending(db)])
   if ((feeds || []).some(f => (f.sources || []).includes(url))) return ok
   if ((pending || []).some(f => f.url === url)) return ok
 
@@ -339,67 +330,66 @@ const handleSubmit = async (req, kv) => {
     description: '',
     submittedAt: new Date().toISOString()
   }
-  const updated = [...(pending || []), item]
-  await kv.put(KV_PENDING, JSON.stringify(updated))
+  await savePending(db, [...pending, item])
   return ok
 }
 
 // POST /api/discover/:id/import — increment import count
-const handleImport = async (kv, id) => {
-  const feed = await getFeed(kv, id)
+const handleImport = async (db, id) => {
+  const feed = await getFeed(db, id)
   if (!feed) return json({ error: 'not found' }, 404)
   feed.imports = (feed.imports || 0) + 1
-  await saveFeed(kv, feed)
+  await saveFeed(db, feed)
   return json({ ok: true })
 }
 
 // curator routes (owner only)
 
 // GET /api/discover/admin/curator
-const handleCuratorList = async (kv) => json(await listCurators(kv))
+const handleCuratorList = async (db) => json(await listCurators(db))
 
 // POST /api/discover/admin/curator/invite
-const handleCuratorInvite = async (req, kv) => {
+const handleCuratorInvite = async (req, db) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
   const { pubkey, name, siteUrl, playlistId } = body
   if (!pubkey || !playlistId) return json({ error: 'pubkey and playlistId required' }, 400)
-  const feed = await getFeed(kv, playlistId)
+  const feed = await getFeed(db, playlistId)
   if (!feed) return json({ error: 'playlist not found' }, 404)
-  if (await getCurator(kv, pubkey)) return json({ error: 'already a curator' }, 409)
+  if (await getCurator(db, pubkey)) return json({ error: 'already a curator' }, 409)
   const now = new Date().toISOString()
   const curator = { playlistId, name: name?.trim() || '', siteUrl: siteUrl?.trim() || '', createdAt: now, lastSeen: now }
   feed.curatorPubkey = pubkey
   feed.curatorName = curator.name
   feed.curatorUrl = curator.siteUrl
-  await Promise.all([saveCurator(kv, pubkey, curator), addToCuratorIndex(kv, pubkey), saveFeed(kv, feed)])
+  await Promise.all([saveCurator(db, pubkey, curator), addToCuratorIndex(db, pubkey), saveFeed(db, feed)])
   return json({ ok: true })
 }
 
 // DELETE /api/discover/admin/curator/:pubkey
-const handleCuratorRevoke = async (kv, pubkey) => {
-  const curator = await getCurator(kv, pubkey)
+const handleCuratorRevoke = async (db, pubkey) => {
+  const curator = await getCurator(db, pubkey)
   if (!curator) return json({ error: 'not found' }, 404)
-  const feed = curator.playlistId ? await getFeed(kv, curator.playlistId) : null
+  const feed = curator.playlistId ? await getFeed(db, curator.playlistId) : null
   if (feed && feed.curatorPubkey === pubkey) {
     delete feed.curatorPubkey
     delete feed.curatorName
     delete feed.curatorUrl
   }
-  await Promise.all([deleteCurator(kv, pubkey), ...(feed ? [saveFeed(kv, feed)] : [])])
+  await Promise.all([deleteCurator(db, pubkey), ...(feed ? [saveFeed(db, feed)] : [])])
   return json({ ok: true })
 }
 
 // admin routes
 
 // POST /api/discover/admin/validate — owner-only batch URL validation
-const handleValidate = async (req, kv) => {
+const handleValidate = async (req, db) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
   const urls = Array.isArray(body.urls) ? body.urls.slice(0, 20) : []
   if (!urls.length) return json({ error: 'urls required' }, 400)
 
-  const [feeds, pending, blocked] = await Promise.all([getFeeds(kv), getPending(kv), getBlocked(kv)])
+  const [feeds, pending, blocked] = await Promise.all([getFeeds(db), getPending(db), getBlocked(db)])
   const allSourceUrls = new Set((feeds || []).flatMap(f => f.sources || []))
   const pendingUrls = new Set((pending || []).map(p => p.url))
   const blockedList = blocked || []
@@ -421,63 +411,63 @@ const handleValidate = async (req, kv) => {
 }
 
 // DELETE /api/discover/admin/pending — reject (remove without approving)
-const handlePendingReject = async (req, kv) => {
+const handlePendingReject = async (req, db) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
   const url = body.url?.trim()
   if (!url) return json({ error: 'url required' }, 400)
-  const pending = await getPending(kv) || []
+  const pending = await getPending(db)
   const updated = pending.filter(p => p.url !== url)
   if (updated.length === pending.length) return json({ error: 'not found' }, 404)
-  await kv.put(KV_PENDING, JSON.stringify(updated))
+  await savePending(db, updated)
   return json({ ok: true })
 }
 
 // GET /api/discover/admin/pending
-const handlePendingList = async (kv) => {
-  return json(await getPending(kv) || [])
+const handlePendingList = async (db) => {
+  return json(await getPending(db))
 }
 
 // POST /api/discover/admin/approve — approve a pending submission
-const handleApprove = async (req, kv) => {
+const handleApprove = async (req, db) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
 
-  const pending = await getPending(kv) || []
+  const pending = await getPending(db)
   const idx = pending.findIndex(f => f.url === body.url)
   if (idx === -1) return json({ error: 'not found' }, 404)
   const item = pending[idx]
   const remaining = pending.filter((_, i) => i !== idx)
 
   if (body.playlistId) {
-    const feed = await getFeed(kv, body.playlistId)
+    const feed = await getFeed(db, body.playlistId)
     if (!feed) return json({ error: 'playlist not found' }, 404)
     const sources = [...new Set([...(feed.sources || []), item.url])]
     await Promise.all([
-      saveFeed(kv, { ...feed, sources }),
-      kv.put(KV_PENDING, JSON.stringify(remaining))
+      saveFeed(db, { ...feed, sources }),
+      savePending(db, remaining)
     ])
     return json({ ok: true })
   }
 
   // no playlist — just dismiss from pending
-  await kv.put(KV_PENDING, JSON.stringify(remaining))
+  await savePending(db, remaining)
   return json({ ok: true })
 }
 
 // POST /api/discover/admin/add — add directly without going through pending
-const handleAdd = async (req, kv) => {
+const handleAdd = async (req, db) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
 
   const sources = Array.isArray(body.sources) ? body.sources : (body.url ? [body.url] : [])
 
-  if (await isBlocked(kv, sources)) return json({ error: 'one or more sources are not accepted' }, 403)
+  if (await isBlocked(db, sources)) return json({ error: 'one or more sources are not accepted' }, 403)
 
   const title = body.title?.trim()
   if (!title && !sources.length) return json({ error: 'title required' }, 400)
   const id = makeId(sources[0] || title)
-  if (await getFeed(kv, id)) return json({ error: 'already exists' }, 409)
+  if (await getFeed(db, id)) return json({ error: 'already exists' }, 409)
 
   const entry = {
     id,
@@ -494,16 +484,16 @@ const handleAdd = async (req, kv) => {
     lastChecked: null,
     addedAt: new Date().toISOString()
   }
-  await Promise.all([saveFeed(kv, entry), addToIndex(kv, id)])
+  await Promise.all([saveFeed(db, entry), addToIndex(db, id)])
   return json({ ok: true, entry })
 }
 
 // PATCH /api/discover/admin/:id — edit an entry
-const handleEdit = async (req, kv, id) => {
+const handleEdit = async (req, db, id) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
 
-  const feed = await getFeed(kv, id)
+  const feed = await getFeed(db, id)
   if (!feed) return json({ error: 'not found' }, 404)
 
   if (body.title !== undefined) feed.title = body.title.trim()
@@ -519,58 +509,46 @@ const handleEdit = async (req, kv, id) => {
     }
   }
 
-  await saveFeed(kv, feed)
+  await saveFeed(db, feed)
   return json({ ok: true })
 }
 
 // DELETE /api/discover/admin/:id
-const handleDelete = async (kv, id) => {
-  const feed = await getFeed(kv, id)
+const handleDelete = async (db, id) => {
+  const feed = await getFeed(db, id)
   if (!feed) return json({ error: 'not found' }, 404)
-  await Promise.all([
-    kv.delete(`${KV_PREFIX}${id}`),
-    removeFromIndex(kv, id)
-  ])
+  await removeFromIndex(db, id)
   return json({ ok: true })
 }
 
 // POST /api/discover/admin/source — register a source URL in the index
-const handleSourceRegister = async (req, kv) => {
+const handleSourceRegister = async (req, db) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
   const url = body.url?.trim().replace(/\/+$/, '')
   if (!url) return json({ error: 'url required' }, 400)
   if (!URL.canParse(url)) return json({ error: 'invalid url' }, 400)
-  const index = await getSourceIndex(kv)
-  const hash = makeId(url)
-  if (index[hash]) return json({ ok: true, existing: true })
-  const { indexEntry } = await fetchAndSaveSource(kv, url)
-  index[hash] = indexEntry
-  await kv.put(KV_SOURCE_INDEX, JSON.stringify(index))
+  const existing = await getSourceData(db, url)
+  if (existing) return json({ ok: true, existing: true })
+  const { indexEntry } = await fetchAndSaveSource(db, url)
   return json({ ok: true, existing: false, source: indexEntry })
 }
 
 // POST /api/discover/admin/:id/sources — add source to a playlist
-const handlePlaylistSourceAdd = async (req, kv, id) => {
+const handlePlaylistSourceAdd = async (req, db, id) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
   const url = body.url?.trim().replace(/\/+$/, '')
   if (!url) return json({ error: 'url required' }, 400)
-  const feed = await getFeed(kv, id)
+  const feed = await getFeed(db, id)
   if (!feed) return json({ error: 'not found' }, 404)
   if ((feed.sources || []).includes(url)) return json({ ok: true, existing: true })
   feed.sources = [...(feed.sources || []), url]
-  const index = await getSourceIndex(kv)
-  const hash = makeId(url)
 
-  let sourceData
-  if (!index[hash]) {
-    const result = await fetchAndSaveSource(kv, url)
-    index[hash] = result.indexEntry
+  let sourceData = await getSourceData(db, url)
+  if (!sourceData) {
+    const result = await fetchAndSaveSource(db, url)
     sourceData = result.sourceData
-    await kv.put(KV_SOURCE_INDEX, JSON.stringify(index))
-  } else {
-    sourceData = await getSourceData(kv, url)
   }
 
   if (sourceData?.posts?.length) {
@@ -578,62 +556,58 @@ const handlePlaylistSourceAdd = async (req, kv, id) => {
     if (!feed.coverImage && sourceData.image) feed.coverImage = sourceData.image
   }
 
-  await saveFeed(kv, feed)
+  await saveFeed(db, feed)
   return json({ ok: true })
 }
 
 // POST /api/discover/admin/:id/refresh — fetch unindexed sources, recompute previewPosts from current sources only
-const handlePlaylistRefresh = async (kv, id) => {
-  const feed = await getFeed(kv, id)
+const handlePlaylistRefresh = async (db, id) => {
+  const feed = await getFeed(db, id)
   if (!feed) return json({ error: 'not found' }, 404)
   if (!feed.sources?.length) return json({ ok: true, fetched: 0 })
 
-  const index = await getSourceIndex(kv)
   let fetched = 0
 
   const sourceDatas = await Promise.all(feed.sources.map(async url => {
-    const hash = makeId(url)
-    if (!index[hash]) {
-      const { sourceData, indexEntry } = await fetchAndSaveSource(kv, url)
-      index[hash] = indexEntry
+    const existing = await getSourceData(db, url)
+    if (!existing?.lastFetched) {
+      const { sourceData } = await fetchAndSaveSource(db, url)
       fetched++
       return sourceData
     }
-    return getSourceData(kv, url)
+    return existing
   }))
-
-  if (fetched) await kv.put(KV_SOURCE_INDEX, JSON.stringify(index))
 
   applySourceDatas(feed, sourceDatas)
   feed.lastUpdated = new Date().toISOString()
 
-  await saveFeed(kv, feed)
+  await saveFeed(db, feed)
   return json({ ok: true, fetched })
 }
 
 // DELETE /api/discover/admin/:id/sources — remove source from a playlist; delete KV if orphaned; recompute previewPosts immediately
-const handlePlaylistSourceRemove = async (req, kv, id) => {
+const handlePlaylistSourceRemove = async (req, db, id) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
   const url = body.url?.trim().replace(/\/+$/, '')
   if (!url) return json({ error: 'url required' }, 400)
-  const [feed, allFeeds] = await Promise.all([getFeed(kv, id), getFeeds(kv)])
+  const [feed, allFeeds] = await Promise.all([getFeed(db, id), getFeeds(db)])
   if (!feed) return json({ error: 'not found' }, 404)
   feed.sources = (feed.sources || []).filter(s => s !== url)
   const stillReferenced = (allFeeds || []).some(f => f.id !== id && (f.sources || []).includes(url))
 
-  const sourceDatas = await Promise.all(feed.sources.map(u => getSourceData(kv, u)))
+  const sourceDatas = await Promise.all(feed.sources.map(u => getSourceData(db, u)))
   applySourceDatas(feed, sourceDatas)
 
   await Promise.all([
-    saveFeed(kv, feed),
-    stillReferenced ? Promise.resolve() : deleteSourceData(kv, url)
+    saveFeed(db, feed),
+    stillReferenced ? Promise.resolve() : deleteSourceData(db, url)
   ])
   return json({ ok: true })
 }
 
 // PATCH /api/discover/admin/source — rename a source URL across all playlists
-const handleSourceEdit = async (req, kv) => {
+const handleSourceEdit = async (req, db) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
   const oldUrl = body.oldUrl?.trim()
@@ -641,73 +615,66 @@ const handleSourceEdit = async (req, kv) => {
   if (!oldUrl || !newUrl) return json({ error: 'oldUrl and newUrl required' }, 400)
   if (!URL.canParse(newUrl)) return json({ error: 'invalid url' }, 400)
 
-  const [feeds, index] = await Promise.all([getFeeds(kv) || [], getSourceIndex(kv)])
-  if (oldUrl === newUrl && index[makeId(oldUrl)]?.lastFetched) return json({ ok: true, affected: 0 })
-  const affected = (feeds || []).filter(f => (f.sources || []).includes(oldUrl))
+  const feeds = await getFeeds(db) || []
+  const existingNew = await getSourceData(db, newUrl)
+  if (oldUrl === newUrl && existingNew?.lastFetched) return json({ ok: true, affected: 0 })
+  const affected = feeds.filter(f => (f.sources || []).includes(oldUrl))
   affected.forEach(f => { f.sources = f.sources.map(s => s === oldUrl ? newUrl : s) })
 
-  const oldHash = makeId(oldUrl)
-  const newHash = makeId(newUrl)
-  delete index[oldHash]
-
-  // only refetch if the new URL isn't already in the index with fresh data
-  let sourceData, indexEntry
-  if (index[newHash]?.lastFetched) {
-    indexEntry = index[newHash]
-    sourceData = await getSourceData(kv, newUrl)
+  // fetch new URL if not already indexed
+  let sourceData
+  if (existingNew?.lastFetched) {
+    sourceData = existingNew
   } else {
-    ;({ sourceData, indexEntry } = await fetchAndSaveSource(kv, newUrl))
+    ;({ sourceData } = await fetchAndSaveSource(db, newUrl))
   }
-  index[newHash] = { ...indexEntry, addedAt: index[oldHash]?.addedAt || index[newHash]?.addedAt || indexEntry.addedAt }
 
   for (const feed of affected) {
     const sourceDatas = await Promise.all(
-      (feed.sources || []).map(u => u === newUrl ? sourceData : getSourceData(kv, u))
+      (feed.sources || []).map(u => u === newUrl ? sourceData : getSourceData(db, u))
     )
     if (!sourceDatas.filter(Boolean).length) continue
     applySourceDatas(feed, sourceDatas, { keepOnEmpty: true })
   }
 
   await Promise.all([
-    ...affected.map(f => saveFeed(kv, f)),
-    kv.put(KV_SOURCE_INDEX, JSON.stringify(index)),
-    kv.delete(`${KV_SOURCE_PREFIX}${oldHash}`)
+    ...affected.map(f => saveFeed(db, f)),
+    oldUrl !== newUrl ? deleteSourceData(db, oldUrl) : Promise.resolve()
   ])
   return json({ ok: true, affected: affected.length })
 }
 
 // DELETE /api/discover/admin/source — remove a source URL from all playlists
-const handleSourceDelete = async (req, kv) => {
+const handleSourceDelete = async (req, db) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
   const url = body.url?.trim().replace(/\/+$/, '')
   if (!url) return json({ error: 'url required' }, 400)
 
-  const feeds = await getFeeds(kv) || []
+  const feeds = await getFeeds(db) || []
   const affected = feeds.filter(f => (f.sources || []).includes(url))
   await Promise.all([
-    ...affected.map(f => { f.sources = f.sources.filter(s => s !== url); return saveFeed(kv, f) }),
-    deleteSourceData(kv, url)
+    ...affected.map(f => { f.sources = f.sources.filter(s => s !== url); return saveFeed(db, f) }),
+    deleteSourceData(db, url)
   ])
   return json({ ok: true, affected: affected.length })
 }
 
 // GET /api/discover/admin/blocked
-const handleBlockedList = async (kv) => json(await getBlocked(kv) || [])
+const handleBlockedList = async (db) => json(await getBlocked(db))
 
 // PUT /api/discover/admin/blocked — replace entire blocked list atomically
-const handleBlockedSave = async (req, kv) => {
+const handleBlockedSave = async (req, db) => {
   const body = await parseJsonBody(req)
   if (!body || !Array.isArray(body.entries)) return json({ error: 'entries array required' }, 400)
   const entries = [...new Set(body.entries.map(e => String(e).trim()).filter(Boolean))]
-  await kv.put(KV_BLOCKED, JSON.stringify(entries))
+  await saveBlocked(db, entries)
   return json({ ok: true, count: entries.length })
 }
 
 // GET /api/mentions/:sourceId.xml — RSS feed of posts from other discover sources linking to this source
-export const handleMentionsFeed = async (kv, sourceId, reqUrl) => {
-  const mentions = await kv.get(`mentions:${sourceId}`, { type: 'json' })
-  const items = mentions || []
+export const handleMentionsFeed = async (db, sourceId, reqUrl) => {
+  const items = await getMentions(db, sourceId)
   const domain = sourceId
   const base = new URL(reqUrl).origin
 
@@ -736,8 +703,8 @@ export const handleMentionsFeed = async (kv, sourceId, reqUrl) => {
 }
 
 // GET /api/discover/admin/webping — find posts in dataset that link to other sources in dataset
-const handleWebping = async (kv) => {
-  const [feeds, sourceIndex] = await Promise.all([getFeeds(kv) || [], getSourceIndex(kv)])
+const handleWebping = async (db) => {
+  const [feeds, sourceIndex] = await Promise.all([getFeeds(db) || [], getSourceIndex(db)])
 
   const sourceDomains = new Map() // hostname → source url
   for (const entry of Object.values(sourceIndex)) {
@@ -745,7 +712,7 @@ const handleWebping = async (kv) => {
   }
 
   const allSourceUrls = [...new Set(feeds.flatMap(f => f.sources || []))]
-  const sourceDatas = await Promise.all(allSourceUrls.map(u => getSourceData(kv, u)))
+  const sourceDatas = await Promise.all(allSourceUrls.map(u => getSourceData(db, u)))
 
   const matches = []
   for (let i = 0; i < allSourceUrls.length; i++) {
@@ -772,8 +739,8 @@ const handleWebping = async (kv) => {
 }
 
 // GET /api/discover/all/opml — full OPML of every approved playlist's sources
-const handleAllOpml = async (kv) => {
-  const feeds = await getFeeds(kv) || []
+const handleAllOpml = async (db) => {
+  const feeds = await getFeeds(db) || []
   return new Response(toOpml(feeds), {
     headers: {
       'Content-Type': 'text/x-opml',
@@ -783,41 +750,34 @@ const handleAllOpml = async (kv) => {
 }
 
 // GET /api/discover/admin/curate
-const handleCurateGet = async (kv) => {
-  const [pending, candidates] = await Promise.all([
-    getPending(kv),
-    kv.get('discover:curate-candidates', { type: 'json' })
-  ])
-  return json({ pending: pending || [], candidates: candidates || [] })
+const handleCurateGet = async (db) => {
+  const [pending, candidates] = await Promise.all([getPending(db), getCandidates(db)])
+  return json({ pending, candidates })
 }
 
 // POST /api/discover/admin/curate/approve — move candidate to pending
-const handleCurateApprove = async (req, kv) => {
+const handleCurateApprove = async (req, db) => {
   const body = await parseJsonBody(req)
   if (!body?.domain || !body?.feedUrl) return json({ error: 'domain and feedUrl required' }, 400)
-  const [pending, candidates] = await Promise.all([getPending(kv), kv.get('discover:curate-candidates', { type: 'json' })])
-  const pendingList = pending || []
-  if (!pendingList.find(p => p.url === body.feedUrl)) {
-    pendingList.push({ url: body.feedUrl, title: body.domain, description: '', submittedAt: new Date().toISOString() })
+  const [pending, candidates] = await Promise.all([getPending(db), getCandidates(db)])
+  if (!pending.find(p => p.url === body.feedUrl)) {
+    pending.push({ url: body.feedUrl, title: body.domain, description: '', submittedAt: new Date().toISOString() })
   }
   await Promise.all([
-    kv.put(KV_PENDING, JSON.stringify(pendingList)),
-    kv.put('discover:curate-candidates', JSON.stringify((candidates || []).filter(c => c.domain !== body.domain)))
+    savePending(db, pending),
+    saveCandidates(db, candidates.filter(c => c.domain !== body.domain))
   ])
   return json({ ok: true })
 }
 
 // DELETE /api/discover/admin/curate/candidate
-const handleCurateDismissCandidate = async (req, kv) => {
+const handleCurateDismissCandidate = async (req, db) => {
   const body = await parseJsonBody(req)
   if (!body?.domain) return json({ error: 'domain required' }, 400)
-  const [candidates, dismissed] = await Promise.all([
-    kv.get('discover:curate-candidates', { type: 'json' }),
-    kv.get('discover:dismissed-domains', { type: 'json' })
-  ])
+  const candidates = await getCandidates(db)
   await Promise.all([
-    kv.put('discover:curate-candidates', JSON.stringify((candidates || []).filter(c => c.domain !== body.domain))),
-    kv.put('discover:dismissed-domains', JSON.stringify([...new Set([...(dismissed || []), body.domain])]))
+    saveCandidates(db, candidates.filter(c => c.domain !== body.domain)),
+    addDismissedDomain(db, body.domain)
   ])
   return json({ ok: true })
 }
@@ -828,42 +788,42 @@ export const handleDiscover = async (req, env) => {
   const url = new URL(req.url)
   const path = url.pathname
   const method = req.method
-  const kv = env.DISCOVER_KV
+  const db = env.DISCOVER_DB
 
   // Public routes — no auth
-  if (method === 'GET' && path === '/api/discover') return handleList(kv, url)
-  if (method === 'POST' && path === '/api/discover/feed') return handleFeed(kv, req)
-  if (method === 'POST' && path === '/api/discover/feed/opml') return handleFeedOpml(kv, req)
-  if (method === 'GET' && path === '/api/discover/all/opml') return handleAllOpml(kv)
-  if (method === 'GET' && path === '/api/discover/random') return handleRandom(kv, url)
-  if (method === 'GET' && path === '/api/discover/new') return handleNew(kv)
-  if (method === 'POST' && path === '/api/discover/preview') return handlePreview(req, kv)
-  if (method === 'POST' && path === '/api/discover/submit') return handleSubmit(req, kv)
+  if (method === 'GET' && path === '/api/discover') return handleList(db, url)
+  if (method === 'POST' && path === '/api/discover/feed') return handleFeed(db, req)
+  if (method === 'POST' && path === '/api/discover/feed/opml') return handleFeedOpml(db, req)
+  if (method === 'GET' && path === '/api/discover/all/opml') return handleAllOpml(db)
+  if (method === 'GET' && path === '/api/discover/random') return handleRandom(db, url)
+  if (method === 'GET' && path === '/api/discover/new') return handleNew(db)
+  if (method === 'POST' && path === '/api/discover/preview') return handlePreview(req, db)
+  if (method === 'POST' && path === '/api/discover/submit') return handleSubmit(req, db)
 
   // /:id routes
   const idMatch = path.match(/^\/api\/discover\/([^/]+)$/)
   if (idMatch) {
     const id = idMatch[1]
-    if (method === 'GET') return handlePlaylist(kv, id)
-    if (method === 'POST') return handleImport(kv, id)
+    if (method === 'GET') return handlePlaylist(db, id)
+    if (method === 'POST') return handleImport(db, id)
   }
 
   const opmlMatch = path.match(/^\/api\/discover\/([^/]+)\/opml$/)
-  if (opmlMatch && method === 'GET') return handleOpml(kv, opmlMatch[1])
+  if (opmlMatch && method === 'GET') return handleOpml(db, opmlMatch[1])
 
   const rssMatch = path.match(/^\/api\/discover\/([^/]+)\/rss$/)
-  if (rssMatch && method === 'GET') return handlePlaylistRss(kv, rssMatch[1], req.url)
+  if (rssMatch && method === 'GET') return handlePlaylistRss(db, rssMatch[1], req.url)
 
   // Admin routes — owner or curator
   const token = req.headers?.get('authorization')?.replace('Bearer ', '')
-  const pubkey = await memberByToken(token, kv)
+  const pubkey = await memberByToken(token, db)
   if (!pubkey) return json({ error: 'unauthorized' }, 401)
   const isOwner = isOwnerPubkey(pubkey, env)
-  const curator = !isOwner ? await getCurator(kv, pubkey) : null
+  const curator = !isOwner ? await getCurator(db, pubkey) : null
   if (!isOwner && !curator) return json({ error: 'unauthorized' }, 401)
 
   if (curator && shouldUpdateLastSeen(curator)) {
-    await saveCurator(kv, pubkey, { ...curator, lastSeen: new Date().toISOString() })
+    await saveCurator(db, pubkey, { ...curator, lastSeen: new Date().toISOString() })
   }
 
   // Routes accessible to curators (own playlist only)
@@ -871,26 +831,26 @@ export const handleDiscover = async (req, env) => {
   if (playlistSourceMatch) {
     const id = playlistSourceMatch[1]
     if (!isOwner && !isCuratorOf(curator, id)) return json({ error: 'unauthorized' }, 401)
-    if (method === 'POST') return handlePlaylistSourceAdd(req, kv, id)
-    if (method === 'DELETE') return handlePlaylistSourceRemove(req, kv, id)
+    if (method === 'POST') return handlePlaylistSourceAdd(req, db, id)
+    if (method === 'DELETE') return handlePlaylistSourceRemove(req, db, id)
   }
 
   const playlistRefreshMatch = path.match(/^\/api\/discover\/admin\/([^/]+)\/refresh$/)
   if (playlistRefreshMatch && method === 'POST') {
     const id = playlistRefreshMatch[1]
     if (!isOwner && !isCuratorOf(curator, id)) return json({ error: 'unauthorized' }, 401)
-    return handlePlaylistRefresh(kv, id)
+    return handlePlaylistRefresh(db, id)
   }
 
   // Specific PATCH/DELETE paths that would otherwise match the /admin/:id playlist catch-all
   if (path === '/api/discover/admin/source') {
     if (!isOwner) return json({ error: 'unauthorized' }, 401)
-    if (method === 'PATCH') return handleSourceEdit(req, kv)
-    if (method === 'DELETE') return handleSourceDelete(req, kv)
+    if (method === 'PATCH') return handleSourceEdit(req, db)
+    if (method === 'DELETE') return handleSourceDelete(req, db)
   }
   if (method === 'DELETE' && path === '/api/discover/admin/pending') {
     if (!isOwner) return json({ error: 'unauthorized' }, 401)
-    return handlePendingReject(req, kv)
+    return handlePendingReject(req, db)
   }
 
   // Catch-all for playlist PATCH/DELETE — specific paths above must come first
@@ -899,57 +859,57 @@ export const handleDiscover = async (req, env) => {
     const id = adminIdMatch[1]
     if (method === 'PATCH') {
       if (!isOwner && !isCuratorOf(curator, id)) return json({ error: 'unauthorized' }, 401)
-      return handleEdit(req, kv, id)
+      return handleEdit(req, db, id)
     }
     if (method === 'DELETE') {
       if (!isOwner) return json({ error: 'unauthorized' }, 401)
-      return handleDelete(kv, id)
+      return handleDelete(db, id)
     }
   }
 
   // Owner-only routes
   if (!isOwner) return json({ error: 'unauthorized' }, 401)
 
-  if (method === 'GET' && path === '/api/discover/admin/curate') return handleCurateGet(kv)
-  if (method === 'POST' && path === '/api/discover/admin/curate/approve') return handleCurateApprove(req, kv)
-  if (method === 'DELETE' && path === '/api/discover/admin/curate/candidate') return handleCurateDismissCandidate(req, kv)
+  if (method === 'GET' && path === '/api/discover/admin/curate') return handleCurateGet(db)
+  if (method === 'POST' && path === '/api/discover/admin/curate/approve') return handleCurateApprove(req, db)
+  if (method === 'DELETE' && path === '/api/discover/admin/curate/candidate') return handleCurateDismissCandidate(req, db)
 
   if (method === 'GET' && path === '/api/discover/admin/status') {
-    const lastCronOk = await kv.get('cron:lastOk')
+    const lastCronOk = await getCronState(db, 'cron:lastOk')
     return json({ lastCronOk })
   }
 
-  if (method === 'GET' && path === '/api/discover/admin/webping') return handleWebping(kv)
+  if (method === 'GET' && path === '/api/discover/admin/webping') return handleWebping(db)
   if (method === 'GET' && path === '/api/discover/admin/feeds') {
-    const feeds = await getFeeds(kv) || []
+    const feeds = await getFeeds(db) || []
     return json({ feeds, tags: computeTags(feeds) })
   }
   if (method === 'GET' && path === '/api/discover/admin/sources') {
-    const index = await getSourceIndex(kv)
+    const index = await getSourceIndex(db)
     return json(Object.values(index))
   }
-  if (method === 'GET' && path === '/api/discover/admin/pending') return handlePendingList(kv)
-  if (method === 'POST' && path === '/api/discover/admin/validate') return handleValidate(req, kv)
-  if (method === 'POST' && path === '/api/discover/admin/approve') return handleApprove(req, kv)
-  if (method === 'POST' && path === '/api/discover/admin/add') return handleAdd(req, kv)
-  if (method === 'POST' && path === '/api/discover/admin/source') return handleSourceRegister(req, kv)
+  if (method === 'GET' && path === '/api/discover/admin/pending') return handlePendingList(db)
+  if (method === 'POST' && path === '/api/discover/admin/validate') return handleValidate(req, db)
+  if (method === 'POST' && path === '/api/discover/admin/approve') return handleApprove(req, db)
+  if (method === 'POST' && path === '/api/discover/admin/add') return handleAdd(req, db)
+  if (method === 'POST' && path === '/api/discover/admin/source') return handleSourceRegister(req, db)
 
-  if (method === 'GET' && path === '/api/discover/admin/blocked') return handleBlockedList(kv)
-  if (method === 'PUT' && path === '/api/discover/admin/blocked') return handleBlockedSave(req, kv)
+  if (method === 'GET' && path === '/api/discover/admin/blocked') return handleBlockedList(db)
+  if (method === 'PUT' && path === '/api/discover/admin/blocked') return handleBlockedSave(req, db)
   if (method === 'POST' && path === '/api/discover/admin/build-curate-candidates') {
-    const [sourceIndex, feeds] = await Promise.all([getSourceIndex(kv), getFeeds(kv)])
+    const [sourceIndex, feeds] = await Promise.all([getSourceIndex(db), getFeeds(db)])
     const allSourceUrls = [...new Set((feeds || []).flatMap(f => f.sources || []))]
-    const sourceAll = await resolveSourceAll(kv, allSourceUrls)
+    const sourceAll = await resolveSourceAll(db, allSourceUrls)
     const freshData = new Map(allSourceUrls.map(u => [u, sourceAll[makeId(u)]]).filter(([, d]) => d))
-    await buildCurateCandidates(kv, sourceIndex, freshData)
+    await buildCurateCandidates(db, sourceIndex, freshData)
     return json({ ok: true, sources: freshData.size })
   }
   if (method === 'POST' && path === '/api/discover/admin/build-link-graph') {
-    const [sourceIndex, feeds] = await Promise.all([getSourceIndex(kv), getFeeds(kv)])
+    const [sourceIndex, feeds] = await Promise.all([getSourceIndex(db), getFeeds(db)])
     const allSourceUrls = [...new Set((feeds || []).flatMap(f => f.sources || []))]
-    const sourceAll = await resolveSourceAll(kv, allSourceUrls)
+    const sourceAll = await resolveSourceAll(db, allSourceUrls)
     const freshData = new Map(allSourceUrls.map(u => [u, sourceAll[makeId(u)]]).filter(([, d]) => d))
-    await buildLinkGraph(kv, sourceIndex, freshData)
+    await buildLinkGraph(db, sourceIndex, freshData)
     return json({ ok: true, sources: freshData.size })
   }
   if (method === 'POST' && path === '/api/discover/admin/check') {
@@ -959,40 +919,31 @@ export const handleDiscover = async (req, env) => {
   }
   if (method === 'POST' && path === '/api/discover/admin/normalize-urls') {
     const norm = u => u.replace(/\/+$/, '')
-    const [feeds, index] = await Promise.all([getFeeds(kv) || [], getSourceIndex(kv)])
+    const feeds = await getFeeds(db) || []
     const ops = []
     for (const feed of feeds) {
       const clean = (feed.sources || []).map(norm)
-      if (clean.join() !== (feed.sources || []).join()) { feed.sources = clean; ops.push(saveFeed(kv, feed)) }
+      if (clean.join() !== (feed.sources || []).join()) { feed.sources = clean; ops.push(saveFeed(db, feed)) }
     }
-    for (const [hash, entry] of Object.entries(index)) {
-      const clean = norm(entry.url)
-      if (clean !== entry.url) {
-        const newHash = makeId(clean)
-        delete index[hash]
-        index[newHash] = { ...entry, url: clean }
-      }
-    }
-    ops.push(kv.put(KV_SOURCE_INDEX, JSON.stringify(index)))
     await Promise.all(ops)
-    return json({ ok: true, updated: ops.length - 1 })
+    return json({ ok: true, updated: ops.length })
   }
   if (method === 'POST' && path === '/api/discover/admin/reset-streaks') {
-    const feeds = await getFeeds(kv) || []
+    const feeds = await getFeeds(db) || []
     feeds.forEach(f => { f.failStreak = 0; f.lastChecked = null; f.active = true })
-    await Promise.all(feeds.map(f => saveFeed(kv, f)))
+    await Promise.all(feeds.map(f => saveFeed(db, f)))
     return json({ ok: true, reset: feeds.length })
   }
 
   // Curator management
-  if (method === 'GET' && path === '/api/discover/admin/curator') return handleCuratorList(kv)
-  if (method === 'POST' && path === '/api/discover/admin/curator/invite') return handleCuratorInvite(req, kv)
+  if (method === 'GET' && path === '/api/discover/admin/curator') return handleCuratorList(db)
+  if (method === 'POST' && path === '/api/discover/admin/curator/invite') return handleCuratorInvite(req, db)
   const curatorPubkeyMatch = path.match(/^\/api\/discover\/admin\/curator\/([^/]+)$/)
-  if (curatorPubkeyMatch && method === 'DELETE') return handleCuratorRevoke(kv, curatorPubkeyMatch[1])
+  if (curatorPubkeyMatch && method === 'DELETE') return handleCuratorRevoke(db, curatorPubkeyMatch[1])
 
   // Backup download
   if (method === 'GET' && path === '/api/discover/admin/backup') {
-    const [feeds, blocked] = await Promise.all([getFeeds(kv), getBlocked(kv)])
+    const [feeds, blocked] = await Promise.all([getFeeds(db), getBlocked(db)])
     const date = new Date().toISOString().slice(0, 10)
     return new Response(JSON.stringify({ date, feeds: feeds || [], blocked: blocked || [] }, null, 2), {
       headers: {
@@ -1007,27 +958,27 @@ export const handleDiscover = async (req, env) => {
 
 // Personal feed slug — admin GET/PUT + user feed PUT
 export const handleUserFeed = async (req, env) => {
-  const kv = env.DISCOVER_KV
+  const db = env.DISCOVER_DB
   const path = new URL(req.url).pathname
   const method = req.method
 
   const authed = async () => {
     const token = req.headers?.get('authorization')?.replace('Bearer ', '')
-    const pubkey = await memberByToken(token, kv)
+    const pubkey = await memberByToken(token, db)
     return isOwnerPubkey(pubkey, env)
   }
 
   if (path === '/api/feed/admin/slug') {
     if (!await authed()) return json({ error: 'unauthorized' }, 401)
     if (method === 'GET') {
-      const slug = await getUserFeedSlug(kv)
+      const slug = await getUserFeedSlug(db)
       return json({ slug: slug || null })
     }
     if (method === 'PUT') {
       const body = await parseJsonBody(req)
       const slug = String(body?.slug || '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 40)
       if (!slug) return json({ error: 'invalid slug' }, 400)
-      await setUserFeedSlug(kv, slug)
+      await setUserFeedSlug(db, slug)
       return json({ ok: true, slug })
     }
   }
@@ -1038,7 +989,7 @@ export const handleUserFeed = async (req, env) => {
     const body = await parseJsonBody(req)
     if (!body) return json({ error: 'invalid json' }, 400)
     const { ids = [], sources = [], customFeeds = [] } = body
-    await setUserFeed(kv, slugMatch[1], { ids, sources, customFeeds })
+    await setUserFeed(db, slugMatch[1], { ids, sources, customFeeds })
     return json({ ok: true })
   }
 
@@ -1047,15 +998,15 @@ export const handleUserFeed = async (req, env) => {
 
 // Personal RSS feed — public, built from stored follows
 export const handlePersonalRss = async (req, env, slug) => {
-  const kv = env.DISCOVER_KV
-  const data = await getUserFeed(kv, slug)
+  const db = env.DISCOVER_DB
+  const data = await getUserFeed(db, slug)
   if (!data) return new Response('Not found', { status: 404 })
 
   const { ids = [], sources: sourcesParam = [] } = data
-  const feeds = (await Promise.all(ids.map(id => getFeed(kv, id)))).filter(Boolean)
+  const feeds = (await Promise.all(ids.map(id => getFeed(db, id)))).filter(Boolean)
   const allSourceUrls = [...new Set([...feeds.flatMap(f => f.sources || []), ...sourcesParam])]
 
-  const sourceAll = await resolveSourceAll(kv, allSourceUrls)
+  const sourceAll = await resolveSourceAll(db, allSourceUrls)
 
   const seen = new Set()
   const posts = allSourceUrls

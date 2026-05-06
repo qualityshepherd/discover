@@ -1,6 +1,7 @@
 import { trackHit, handleAnalytics, AnalyticsDO } from './analytics.js'
 import { handleDiscover, handleMentionsFeed, checkDiscoverFeeds, handleUserFeed, handlePersonalRss } from './discover.js'
 import { handleAuth, memberByToken, isOwnerPubkey } from './auth.js'
+import { getFeed } from './discover-db.js'
 import { json } from './utils.js'
 
 export { AnalyticsDO }
@@ -49,7 +50,7 @@ export default {
 
     // Mentions feeds — public RSS per source
     const mentionsMatch = path.match(/^\/api\/mentions\/([^/]+)\.xml$/)
-    if (mentionsMatch) return handleMentionsFeed(env.DISCOVER_KV, mentionsMatch[1], req.url)
+    if (mentionsMatch) return handleMentionsFeed(env.DISCOVER_DB, mentionsMatch[1], req.url)
 
     // Discover routes — public except /admin sub-paths (auth handled inside)
     if (path.startsWith('/api/discover')) return handleDiscover(req, env)
@@ -57,14 +58,14 @@ export default {
     // Auth gate — all /api/* routes not in PUBLIC_API require a valid token
     if (path.startsWith('/api/') && !PUBLIC_API.has(path)) {
       const token = req.headers.get('authorization')?.replace('Bearer ', '')
-      const pubkey = token ? await memberByToken(token, env.DISCOVER_KV) : null
+      const pubkey = token ? await memberByToken(token, env.DISCOVER_DB) : null
       if (!pubkey) return json({ error: 'unauthorized' }, 401)
     }
 
     // Analytics (owner-only)
     if (path === '/api/analytics') {
       const token = req.headers.get('authorization')?.replace('Bearer ', '')
-      const pubkey = token ? await memberByToken(token, env.DISCOVER_KV) : null
+      const pubkey = token ? await memberByToken(token, env.DISCOVER_DB) : null
       if (!isOwnerPubkey(pubkey, env)) return json({ error: 'unauthorized' }, 401)
       return handleAnalytics(req, env, url.hostname)
     }
@@ -76,9 +77,9 @@ export default {
 
     // Sitemap
     if (path === '/sitemap.xml') {
-      const { keys } = await env.DISCOVER_KV.list({ prefix: 'feed:' })
+      const rows = await env.DISCOVER_DB.prepare('SELECT id FROM feeds').all()
       const base = `https://${env.DOMAIN_NAME}`
-      const locs = keys.map(k => `  <url><loc>${base}/discover/${k.name.slice(5)}</loc></url>`).join('\n')
+      const locs = rows.results.map(r => `  <url><loc>${base}/discover/${r.id}</loc></url>`).join('\n')
       const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>${base}/</loc></url>\n  <url><loc>${base}/about</loc></url>\n${locs}\n</urlset>`
       return new Response(xml, { headers: { 'Content-Type': 'application/xml;charset=utf-8' } })
     }
@@ -89,7 +90,7 @@ export default {
       const id = path.slice('/discover/'.length)
       const baseRes = env.ASSETS.fetch(new Request(new URL('/discover/index.html', req.url)))
       if (!id) return withSec(baseRes)
-      const feed = await env.DISCOVER_KV.get(`feed:${id}`, 'json').catch(() => null)
+      const feed = await getFeed(env.DISCOVER_DB, id).catch(() => null)
       if (!feed) return withSec(baseRes)
       const title = `${feed.title} · discover rss feeds worth reading`
       const desc = feed.description || 'A curated RSS playlist on discover.'

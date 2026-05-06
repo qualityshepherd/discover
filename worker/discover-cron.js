@@ -1,9 +1,12 @@
 import { parseFeed } from './feedParser.js'
 import {
   makeId, getFeeds, getSourceIndex, getSourceData, saveSourceData, saveFeeds,
-  KV_SOURCE_INDEX, getBlocked,
+  updateSourceMeta, updateMentionCounts,
+  getBlocked, getMentions, saveMentions,
+  getDismissedDomains, getCandidates, saveCandidates,
+  setCronState,
   listCurators, deleteCurator, isCuratorInactive
-} from './discover-kv.js'
+} from './discover-db.js'
 
 export const VIDEO_DOMAINS = new Set(['youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv', 'rumble.com'])
 
@@ -68,7 +71,7 @@ export const findImage = (posts) => {
 // recompute coverImage / updateFrequency / previewPosts on affected feeds.
 // Fetch a source URL, save to KV, return { sourceData, indexEntry }.
 // Used by admin add/edit — no existing-data fallback since source is new.
-export const fetchAndSaveSource = async (kv, url) => {
+export const fetchAndSaveSource = async (db, url) => {
   const now = Date.now()
   const result = await fetchSource(url, 10)
   let posts = []; let siteUrl = null; let image = null; let frequency = null
@@ -78,9 +81,9 @@ export const fetchAndSaveSource = async (kv, url) => {
     posts = result.posts.slice(0, 3).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
     siteUrl = result.siteUrl || null
   }
-  const sourceData = { url, siteUrl, posts, image, statusCode: result.statusCode ?? null, error: result.error || null, lastFetched: new Date(now).toISOString() }
+  const sourceData = { url, siteUrl, posts, image, frequency, statusCode: result.statusCode ?? null, error: result.error || null, lastFetched: new Date(now).toISOString() }
   const indexEntry = { url, lastFetched: sourceData.lastFetched, statusCode: sourceData.statusCode, error: sourceData.error, hasPosts: posts.length > 0, latestPostUrl: posts[0]?.url || null, latestPostDate: posts[0]?.date || null, image: sourceData.image, frequency: frequency || null, addedAt: new Date(now).toISOString() }
-  await saveSourceData(kv, url, sourceData)
+  await saveSourceData(db, url, sourceData)
   return { sourceData, indexEntry }
 }
 
@@ -95,7 +98,7 @@ export const applySourceDatas = (feed, sourceDatas, { keepOnEmpty = false } = {}
   feed.updateFrequency = computeFrequency(allPosts) ?? feed.updateFrequency ?? null
 }
 
-export const buildLinkGraph = async (kv, sourceIndex, freshData) => {
+export const buildLinkGraph = async (db, sourceIndex, freshData) => {
   if (!freshData.size) return
 
   const domainToSource = new Map()
@@ -157,23 +160,25 @@ export const buildLinkGraph = async (kv, sourceIndex, freshData) => {
 
   if (!byTarget.size) return
 
-  let indexDirty = false
+  const mentionCountChanges = []
   await Promise.all([...byTarget.entries()].map(async ([targetHash, newItems]) => {
-    const existing = await kv.get(`mentions:${targetHash}`, { type: 'json' }) || []
+    const existing = await getMentions(db, targetHash)
     const newKeys = new Set(newItems.map(m => `${m.fromSource}:${m.fromPost}`))
     const kept = existing.filter(m => !newKeys.has(`${m.fromSource}:${m.fromPost}`))
     const updated = [...kept, ...newItems]
       .sort((a, b) => new Date(b.foundAt) - new Date(a.foundAt))
       .slice(0, 100)
-    await kv.put(`mentions:${targetHash}`, JSON.stringify(updated))
-    // update mentionCount on all sourceIndex entries for this domain
+    await saveMentions(db, targetHash, updated)
     const hashes = domainToHashes.get(targetHash) || []
     for (const h of hashes) {
-      if (sourceIndex[h]) { sourceIndex[h].mentionCount = updated.length; indexDirty = true }
+      if (sourceIndex[h]) {
+        sourceIndex[h].mentionCount = updated.length
+        mentionCountChanges.push({ url: sourceIndex[h].url, count: updated.length })
+      }
     }
   }))
 
-  if (indexDirty) await kv.put(KV_SOURCE_INDEX, JSON.stringify(sourceIndex))
+  if (mentionCountChanges.length) await updateMentionCounts(db, mentionCountChanges)
 }
 
 const SKIP_CURATE_DOMAINS = new Set([
@@ -210,7 +215,7 @@ const probeFeedUrl = async (domain) => {
   return null
 }
 
-export const buildCurateCandidates = async (kv, sourceIndex, freshData, _probe = probeFeedUrl) => {
+export const buildCurateCandidates = async (db, sourceIndex, freshData, _probe = probeFeedUrl) => {
   if (!freshData.size) return
 
   const knownDomains = new Set()
@@ -221,7 +226,7 @@ export const buildCurateCandidates = async (kv, sourceIndex, freshData, _probe =
     } catch {}
   }
 
-  const dismissed = new Set(await kv.get('discover:dismissed-domains', { type: 'json' }) || [])
+  const dismissed = new Set(await getDismissedDomains(db))
   const domainSources = new Map()
 
   for (const [sourceUrl, data] of freshData) {
@@ -249,8 +254,7 @@ export const buildCurateCandidates = async (kv, sourceIndex, freshData, _probe =
     .map(([domain, srcs]) => ({ domain, score: srcs.size, sources: [...srcs] }))
     .sort((a, b) => b.score - a.score)
 
-  const existingCandidates = await kv.get('discover:curate-candidates', { type: 'json' })
-  const candidates = existingCandidates || []
+  const candidates = await getCandidates(db)
   const candidateDomains = new Set(candidates.map(c => c.domain))
 
   for (const entry of candidates) {
@@ -270,24 +274,24 @@ export const buildCurateCandidates = async (kv, sourceIndex, freshData, _probe =
   }
 
   candidates.sort((a, b) => b.score - a.score)
-  await kv.put('discover:curate-candidates', JSON.stringify(candidates.slice(0, 50)))
+  await saveCandidates(db, candidates.slice(0, 50))
 }
 
-export const pruneCurators = async (kv) => {
-  const curators = await listCurators(kv)
+export const pruneCurators = async (db) => {
+  const curators = await listCurators(db)
   const inactive = curators.filter(c => isCuratorInactive(c))
   if (!inactive.length) return { pruned: 0 }
-  await Promise.all(inactive.map(c => deleteCurator(kv, c.pubkey)))
+  await Promise.all(inactive.map(c => deleteCurator(db, c.pubkey)))
   return { pruned: inactive.length }
 }
 
 export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
-  const kv = env.DISCOVER_KV
-  const allFeeds = await getFeeds(kv)
+  const db = env.DISCOVER_DB
+  const allFeeds = await getFeeds(db)
   if (!allFeeds?.length) return { processed: 0, skipped: 0 }
 
   const now = Date.now()
-  const sourceIndex = await getSourceIndex(kv)
+  const sourceIndex = await getSourceIndex(db)
   const allSourceUrls = [...new Set(allFeeds.flatMap(f => f.sources || []))]
 
   const due = allSourceUrls
@@ -301,7 +305,6 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
     .slice(0, MAX_FETCHES_PER_RUN)
 
   const freshData = new Map()
-  const allFetchedData = new Map()
 
   for (const { url } of due) {
     const hash = makeId(url)
@@ -315,22 +318,23 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
       const latestPostUrl = posts[0]?.url || null
       const changed = latestPostUrl !== entry.latestPostUrl || image !== entry.image
 
-      const data = { url, siteUrl: result.siteUrl || null, posts, image, statusCode: result.statusCode, error: null, lastFetched: new Date(now).toISOString() }
-      allFetchedData.set(url, data)
+      const data = { url, siteUrl: result.siteUrl || null, posts, image, frequency, statusCode: result.statusCode, error: null, lastFetched: new Date(now).toISOString() }
       if (changed) {
-        await saveSourceData(kv, url, data)
+        await saveSourceData(db, url, data)
+        freshData.set(url, data)
+      } else {
+        await updateSourceMeta(db, url, { statusCode: result.statusCode, error: null, frequency, lastFetched: new Date(now).toISOString() })
         freshData.set(url, data)
       }
       sourceIndex[hash] = { ...entry, url, lastFetched: new Date(now).toISOString(), statusCode: result.statusCode, error: null, hasPosts: posts.length > 0, latestPostUrl, latestPostDate: posts[0]?.date || entry.latestPostDate || null, image, frequency: frequency || entry.frequency || null, addedAt: entry.addedAt || new Date(now).toISOString() }
     } else {
-      // fetch failed — update index only, leave sourceData untouched
+      // fetch failed — update metadata only, leave posts untouched
+      await updateSourceMeta(db, url, { statusCode: result.statusCode ?? 0, error: result.error || null, lastFetched: new Date(now).toISOString() })
       sourceIndex[hash] = { ...entry, url, lastFetched: new Date(now).toISOString(), statusCode: result.statusCode ?? 0, error: result.error || null, addedAt: entry.addedAt || new Date(now).toISOString() }
-      const existing = await getSourceData(kv, url)
+      const existing = await getSourceData(db, url)
       if (existing) freshData.set(url, existing)
     }
   }
-
-  if (due.length) await kv.put(KV_SOURCE_INDEX, JSON.stringify(sourceIndex))
 
   // Recompute feeds that had sources updated OR have never been populated
   const updatedUrls = new Set(due.map(d => d.url))
@@ -342,35 +346,27 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
   const changedFeeds = []
   for (const feed of needsUpdate) {
     const sourceDatas = await Promise.all(
-      (feed.sources || []).map(url => freshData.has(url) ? freshData.get(url) : getSourceData(kv, url))
+      (feed.sources || []).map(url => freshData.has(url) ? freshData.get(url) : getSourceData(db, url))
     )
     if (!sourceDatas.filter(Boolean).length) continue
     applySourceDatas(feed, sourceDatas, { keepOnEmpty: true })
     feed.lastUpdated = new Date(now).toISOString()
     changedFeeds.push(feed)
   }
-  if (changedFeeds.length) await saveFeeds(kv, allFeeds, changedFeeds)
+  if (changedFeeds.length) await saveFeeds(db, allFeeds, changedFeeds)
 
-  await buildLinkGraph(kv, sourceIndex, freshData).catch(err => console.error('buildLinkGraph failed:', err))
-  await buildCurateCandidates(kv, sourceIndex, freshData).catch(err => console.error('buildCurateCandidates failed:', err))
-  await pruneCurators(kv).catch(err => console.error('pruneCurators failed:', err))
+  await buildLinkGraph(db, sourceIndex, freshData).catch(err => console.error('buildLinkGraph failed:', err))
+  await buildCurateCandidates(db, sourceIndex, freshData).catch(err => console.error('buildCurateCandidates failed:', err))
+  await pruneCurators(db).catch(err => console.error('pruneCurators failed:', err))
 
-  if (allFetchedData.size) {
-    const sourceAll = await kv.get('source:all', { type: 'json' }) || {}
-    for (const [url, data] of allFetchedData) {
-      sourceAll[makeId(url)] = { url: data.url, posts: data.posts, image: data.image, siteUrl: data.siteUrl }
-    }
-    await kv.put('source:all', JSON.stringify(sourceAll))
-  }
-
-  await kv.put('cron:lastOk', new Date().toISOString())
+  await setCronState(db, 'cron:lastOk', new Date().toISOString())
 
   if (env.R2) {
     const today = new Date().toISOString().slice(0, 10)
     const key = `backup/discover-${today}.json`
     const existing = await env.R2.head(key).catch(() => null)
     if (!existing) {
-      const [feeds, blocked] = await Promise.all([getFeeds(kv), getBlocked(kv)])
+      const [feeds, blocked] = await Promise.all([getFeeds(db), getBlocked(db)])
       await env.R2.put(key, JSON.stringify({ date: today, feeds: feeds || [], blocked: blocked || [] }), {
         httpMetadata: { contentType: 'application/json' }
       })

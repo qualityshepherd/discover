@@ -4,6 +4,7 @@
 
 import ANALYTICS_TEMPLATE from './analyticsTemplate.js'
 import { isBot, isDatacenter, parseRssSubscribers, parseDevice, buildHit, hashIp, getSiteStub, handleAnalytics as _handleAnalytics } from './analytics-core.js'
+import { getFeed } from './discover-db.js'
 export {
   AnalyticsDO,
   parseRssSubscribers, parseDevice, isBot, isDatacenter,
@@ -90,7 +91,7 @@ export async function trackHit (req, env) {
     const ipHash = await hashIp(ip)
     let feedTitle = id
     try {
-      const feed = await env.DISCOVER_KV.get(`feed:${id}`, { type: 'json' })
+      const feed = await getFeed(env.DISCOVER_DB, id)
       if (feed?.title) feedTitle = feed.title
     } catch {}
     try {

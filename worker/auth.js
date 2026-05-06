@@ -3,6 +3,7 @@ import {
   isValidToken, scorePassphrase
 } from '../assets/lib/keys.js'
 import { json, parseJsonBody } from './utils.js'
+import { getSession, createSession, getRateLimit, setRateLimit, deleteRateLimit } from './discover-db.js'
 
 export { scorePassphrase, isValidToken, makeSession, isSessionValid }
 
@@ -27,23 +28,22 @@ export const incrementAttempt = (record, now, windowMs) => {
   return { count: record.count + 1, resetAt: record.resetAt }
 }
 
-// Returns pubkey string or null — sessions are the only KV auth state
-export const memberByToken = async (token, kv) => {
+// Returns pubkey string or null
+export const memberByToken = async (token, db) => {
   if (!token) return null
-  return kv.get(`session:${token}`)
+  return getSession(db, token)
 }
 
-const writeSession = async (token, pubkey, expires, kv) => {
+const writeSession = async (token, pubkey, expires, db) => {
   if (expires <= Date.now()) return
-  const ttl = Math.ceil((expires - Date.now()) / 1000)
-  await kv.put(`session:${token}`, pubkey, { expirationTtl: ttl })
+  await createSession(db, token, pubkey, expires)
 }
 
 export const handleAuth = async (req, env) => {
   const url = new URL(req.url)
   const path = url.pathname
   const method = req.method
-  const kv = env.DISCOVER_KV
+  const db = env.DISCOVER_DB
 
   // Challenge — also tells the UI whether OWNER is configured
   if (method === 'GET' && path === '/api/challenge') {
@@ -63,7 +63,7 @@ export const handleAuth = async (req, env) => {
     if (!isOwnerPubkey(pubkey, env)) return json({ error: 'unauthorized' }, 401)
 
     const rlKey = `ratelimit:login:${ip}`
-    const rlRecord = await kv.get(rlKey, { type: 'json' })
+    const rlRecord = await getRateLimit(db, rlKey)
     if (isRateLimited(rlRecord, Date.now(), 6)) {
       console.warn(`[rate-limit] login blocked ip=${ip}`)
       return json({ error: 'too many attempts' }, 429)
@@ -71,13 +71,13 @@ export const handleAuth = async (req, env) => {
 
     const valid = await verifyChallenge(challenge, sig, pubkey)
     if (!valid) {
-      await kv.put(rlKey, JSON.stringify(incrementAttempt(rlRecord, Date.now(), 12 * 60 * 1000)), { expirationTtl: 12 * 60 })
+      await setRateLimit(db, rlKey, incrementAttempt(rlRecord, Date.now(), 12 * 60 * 1000))
       return json({ error: 'unauthorized' }, 401)
     }
 
-    await kv.delete(rlKey)
+    await deleteRateLimit(db, rlKey)
     const session = makeSession()
-    await writeSession(session.token, pubkey, session.expires, kv)
+    await writeSession(session.token, pubkey, session.expires, db)
     return new Response(JSON.stringify({ token: session.token, expires: session.expires }), {
       headers: {
         'Content-Type': 'application/json',
@@ -88,7 +88,7 @@ export const handleAuth = async (req, env) => {
 
   if (method === 'GET' && path === '/api/me') {
     const token = req.headers?.get('authorization')?.replace('Bearer ', '')
-    const pubkey = await memberByToken(token, kv)
+    const pubkey = await memberByToken(token, db)
     if (!pubkey) return json({ error: 'unauthorized' }, 401)
     return json({ pubkey, isOwner: isOwnerPubkey(pubkey, env) })
   }

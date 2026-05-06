@@ -3,36 +3,38 @@ import { computeFrequency, makeId, computeTags, isClickThrough } from '../../wor
 import { buildCurateCandidates } from '../../worker/discover-cron.js'
 import {
   isBlocked,
-  getCurator, saveCurator, deleteCurator, listCurators, addToCuratorIndex,
-  isCuratorOf, shouldUpdateLastSeen, isCuratorInactive
-} from '../../worker/discover-kv.js'
+  isCuratorOf, shouldUpdateLastSeen, isCuratorInactive,
+  getCandidates
+} from '../../worker/discover-db.js'
 
 // ── isBlocked ─────────────────────────────────────────────────────────────────
 
-const fakeKv = (list) => ({ get: async () => list })
+const fakeBlockedDb = (list) => ({
+  prepare: () => ({ all: async () => ({ results: list.map(d => ({ domain: d })) }) })
+})
 
 test('isBlocked: returns false when blocked list is empty', async t => {
-  t.falsy(await isBlocked(fakeKv([]), ['https://example.com/feed.xml']))
+  t.falsy(await isBlocked(fakeBlockedDb([]), ['https://example.com/feed.xml']))
 })
 
 test('isBlocked: matches full URL substring', async t => {
-  t.ok(await isBlocked(fakeKv(['badsite.com']), ['https://badsite.com/feed.xml']))
+  t.ok(await isBlocked(fakeBlockedDb(['badsite.com']), ['https://badsite.com/feed.xml']))
 })
 
 test('isBlocked: matches hostname with www stripped', async t => {
-  t.ok(await isBlocked(fakeKv(['badsite.com']), ['https://www.badsite.com/feed.xml']))
+  t.ok(await isBlocked(fakeBlockedDb(['badsite.com']), ['https://www.badsite.com/feed.xml']))
 })
 
 test('isBlocked: does not block unrelated domain', async t => {
-  t.falsy(await isBlocked(fakeKv(['badsite.com']), ['https://goodsite.com/feed.xml']))
+  t.falsy(await isBlocked(fakeBlockedDb(['badsite.com']), ['https://goodsite.com/feed.xml']))
 })
 
 test('isBlocked: returns true if any source matches', async t => {
-  t.ok(await isBlocked(fakeKv(['badsite.com']), ['https://ok.com/feed.xml', 'https://badsite.com/feed.xml']))
+  t.ok(await isBlocked(fakeBlockedDb(['badsite.com']), ['https://ok.com/feed.xml', 'https://badsite.com/feed.xml']))
 })
 
 test('isBlocked: handles invalid url without throwing', async t => {
-  t.falsy(await isBlocked(fakeKv(['badsite.com']), ['not-a-url']))
+  t.falsy(await isBlocked(fakeBlockedDb(['badsite.com']), ['not-a-url']))
 })
 
 // ── makeId ────────────────────────────────────────────────────────────────────
@@ -135,77 +137,6 @@ test('computeFrequency: exactly 8 posts returns weekly', t => {
   t.is(computeFrequency(posts), 'weekly')
 })
 
-// ── curator KV helpers ────────────────────────────────────────────────────────
-
-const makeKv = (initial = {}) => {
-  const store = new Map(Object.entries(initial).map(([k, v]) => [k, JSON.stringify(v)]))
-  return {
-    get: async (key, opts) => {
-      const val = store.get(key)
-      if (val == null) return null
-      return opts?.type === 'json' ? JSON.parse(val) : val
-    },
-    put: async (key, val) => store.set(key, val),
-    delete: async (key) => store.delete(key)
-  }
-}
-
-test('getCurator: returns null when not found', async t => {
-  t.is(await getCurator(makeKv(), 'pk1'), null)
-})
-
-test('saveCurator + getCurator: round-trips data', async t => {
-  const kv = makeKv()
-  await saveCurator(kv, 'pk1', { playlistId: 'abc', name: 'Alice', siteUrl: 'https://alice.com', createdAt: '2024-01-01', lastSeen: '2024-01-01' })
-  const c = await getCurator(kv, 'pk1')
-  t.is(c.playlistId, 'abc')
-  t.is(c.name, 'Alice')
-})
-
-test('addToCuratorIndex: adds pubkey to index', async t => {
-  const kv = makeKv()
-  await addToCuratorIndex(kv, 'pk1')
-  const curator = { playlistId: 'x', name: '', siteUrl: '', createdAt: '', lastSeen: '' }
-  await saveCurator(kv, 'pk1', curator)
-  const list = await listCurators(kv)
-  t.is(list.length, 1)
-  t.is(list[0].pubkey, 'pk1')
-})
-
-test('addToCuratorIndex: deduplicates', async t => {
-  const kv = makeKv()
-  await addToCuratorIndex(kv, 'pk1')
-  await addToCuratorIndex(kv, 'pk1')
-  const curator = { playlistId: 'x', name: '', siteUrl: '', createdAt: '', lastSeen: '' }
-  await saveCurator(kv, 'pk1', curator)
-  const list = await listCurators(kv)
-  t.is(list.length, 1)
-})
-
-test('listCurators: returns empty array when no curators', async t => {
-  t.deepEqual(await listCurators(makeKv()), [])
-})
-
-test('listCurators: returns all curators with pubkey merged in', async t => {
-  const kv = makeKv()
-  await addToCuratorIndex(kv, 'pk1')
-  await addToCuratorIndex(kv, 'pk2')
-  await saveCurator(kv, 'pk1', { playlistId: 'a', name: 'Alice', siteUrl: '', createdAt: '', lastSeen: '' })
-  await saveCurator(kv, 'pk2', { playlistId: 'b', name: 'Bob', siteUrl: '', createdAt: '', lastSeen: '' })
-  const list = await listCurators(kv)
-  t.is(list.length, 2)
-  t.ok(list.every(c => c.pubkey))
-})
-
-test('deleteCurator: removes entry and from index', async t => {
-  const kv = makeKv()
-  await addToCuratorIndex(kv, 'pk1')
-  await saveCurator(kv, 'pk1', { playlistId: 'a', name: '', siteUrl: '', createdAt: '', lastSeen: '' })
-  await deleteCurator(kv, 'pk1')
-  t.is(await getCurator(kv, 'pk1'), null)
-  t.deepEqual(await listCurators(kv), [])
-})
-
 // ── isCuratorOf ───────────────────────────────────────────────────────────────
 
 test('isCuratorOf: true when playlistId matches', t => {
@@ -304,80 +235,120 @@ const makeFreshData = (entries) => new Map(
   entries.map(([url, links]) => [url, { posts: [makePost(links)] }])
 )
 
+// Minimal D1 mock supporting what getCandidates/getDismissedDomains/saveCandidates need
+const makeDb = ({ candidates: initCandidates = [], dismissed: initDismissed = [] } = {}) => {
+  let rows = initCandidates.map(c => ({ ...c }))
+  const dismissed = new Set(initDismissed)
+
+  const makeStmt = (sql, args = []) => ({
+    bind: (...a) => makeStmt(sql, a),
+    all: async () => {
+      if (sql.includes('FROM dismissed_domains')) {
+        return { results: [...dismissed].map(d => ({ domain: d })) }
+      }
+      if (sql.includes('FROM curate_candidates')) {
+        return {
+          results: [...rows].sort((a, b) => b.score - a.score).map(c => ({
+            domain: c.domain,
+            score: c.score || 0,
+            sources: JSON.stringify(c.sources || []),
+            first_seen: c.firstSeen || null,
+            probed_at: c.probedAt || null,
+            feed_url: c.feedUrl || null
+          }))
+        }
+      }
+      return { results: [] }
+    },
+    first: async () => null,
+    run: async () => {
+      if (sql.includes('DELETE FROM curate_candidates')) { rows = [] } else if (sql.includes('INSERT INTO curate_candidates')) {
+        const [domain, score, sourcesJson, firstSeen, probedAt, feedUrl] = args
+        rows.push({ domain, score, sources: JSON.parse(sourcesJson || '[]'), firstSeen, probedAt, feedUrl })
+      }
+    }
+  })
+
+  return {
+    prepare: sql => makeStmt(sql),
+    batch: async stmts => { for (const s of stmts) await s.run() }
+  }
+}
+
 test('buildCurateCandidates: does nothing with empty freshData', async t => {
-  const kv = makeKv()
-  await buildCurateCandidates(kv, {}, new Map(), noProbe)
-  t.is(await kv.get('discover:curate-candidates', { type: 'json' }), null)
+  const db = makeDb()
+  await buildCurateCandidates(db, {}, new Map(), noProbe)
+  t.is((await getCandidates(db)).length, 0)
 })
 
 test('buildCurateCandidates: skips domains already in sourceIndex', async t => {
-  const kv = makeKv()
+  const db = makeDb()
   const sourceIndex = makeSourceIndex(['https://known.com/feed'])
   const freshData = makeFreshData([['https://source.com/feed', ['https://known.com/some-post']]])
-  await buildCurateCandidates(kv, sourceIndex, freshData, noProbe)
-  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
-  t.falsy((candidates || []).find(c => c.domain === 'known.com'))
+  await buildCurateCandidates(db, sourceIndex, freshData, noProbe)
+  const candidates = await getCandidates(db)
+  t.falsy(candidates.find(c => c.domain === 'known.com'))
 })
 
 test('buildCurateCandidates: skips dismissed domains', async t => {
-  const kv = makeKv({ 'discover:dismissed-domains': ['dismissed.com'] })
+  const db = makeDb({ dismissed: ['dismissed.com'] })
   const freshData = makeFreshData([['https://source.com/feed', ['https://dismissed.com/post']]])
-  await buildCurateCandidates(kv, {}, freshData, noProbe)
-  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
-  t.falsy((candidates || []).find(c => c.domain === 'dismissed.com'))
+  await buildCurateCandidates(db, {}, freshData, noProbe)
+  const candidates = await getCandidates(db)
+  t.falsy(candidates.find(c => c.domain === 'dismissed.com'))
 })
 
 test('buildCurateCandidates: skips video domains', async t => {
-  const kv = makeKv()
+  const db = makeDb()
   const freshData = makeFreshData([['https://source.com/feed', ['https://youtube.com/watch?v=123']]])
-  await buildCurateCandidates(kv, {}, freshData, noProbe)
-  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
-  t.falsy((candidates || []).find(c => c.domain === 'youtube.com'))
+  await buildCurateCandidates(db, {}, freshData, noProbe)
+  const candidates = await getCandidates(db)
+  t.falsy(candidates.find(c => c.domain === 'youtube.com'))
 })
 
 test('buildCurateCandidates: skips social/noise domains', async t => {
-  const kv = makeKv()
+  const db = makeDb()
   const freshData = makeFreshData([['https://source.com/feed', ['https://twitter.com/user', 'https://reddit.com/r/foo']]])
-  await buildCurateCandidates(kv, {}, freshData, noProbe)
-  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
-  t.falsy((candidates || []).find(c => c.domain === 'twitter.com' || c.domain === 'reddit.com'))
+  await buildCurateCandidates(db, {}, freshData, noProbe)
+  const candidates = await getCandidates(db)
+  t.falsy(candidates.find(c => c.domain === 'twitter.com' || c.domain === 'reddit.com'))
 })
 
 test('buildCurateCandidates: skips self-links', async t => {
-  const kv = makeKv()
+  const db = makeDb()
   const freshData = makeFreshData([['https://source.com/feed', ['https://source.com/other-post']]])
-  await buildCurateCandidates(kv, {}, freshData, noProbe)
-  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
-  t.falsy((candidates || []).find(c => c.domain === 'source.com'))
+  await buildCurateCandidates(db, {}, freshData, noProbe)
+  const candidates = await getCandidates(db)
+  t.falsy(candidates.find(c => c.domain === 'source.com'))
 })
 
 test('buildCurateCandidates: scores by source diversity', async t => {
-  const kv = makeKv()
+  const db = makeDb()
   const freshData = makeFreshData([
     ['https://a.com/feed', ['https://target.com/post']],
     ['https://b.com/feed', ['https://target.com/post']],
     ['https://c.com/feed', ['https://target.com/post']]
   ])
-  await buildCurateCandidates(kv, {}, freshData, feedProbe)
-  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
-  const entry = (candidates || []).find(c => c.domain === 'target.com')
+  await buildCurateCandidates(db, {}, freshData, feedProbe)
+  const candidates = await getCandidates(db)
+  const entry = candidates.find(c => c.domain === 'target.com')
   t.ok(entry)
   t.is(entry.score, 3)
   t.is(entry.sources.length, 3)
 })
 
 test('buildCurateCandidates: probe returning feed url goes to candidates', async t => {
-  const kv = makeKv()
+  const db = makeDb()
   const freshData = makeFreshData([['https://source.com/feed', ['https://newblog.com/post']]])
-  await buildCurateCandidates(kv, {}, freshData, feedProbe)
-  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
-  const entry = (candidates || []).find(c => c.domain === 'newblog.com')
+  await buildCurateCandidates(db, {}, freshData, feedProbe)
+  const candidates = await getCandidates(db)
+  const entry = candidates.find(c => c.domain === 'newblog.com')
   t.ok(entry)
   t.is(entry.feedUrl, 'https://found.example.com/feed')
 })
 
 test('buildCurateCandidates: limits new probes to 3', async t => {
-  const kv = makeKv()
+  const db = makeDb()
   const domains = ['alpha.com', 'beta.com', 'gamma.com', 'delta.com', 'epsilon.com']
   const freshData = makeFreshData(
     domains.flatMap(d => [
@@ -385,22 +356,22 @@ test('buildCurateCandidates: limits new probes to 3', async t => {
       [`https://src2-${d}/feed`, [`https://${d}/other`]]
     ])
   )
-  await buildCurateCandidates(kv, {}, freshData, feedProbe)
-  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
-  t.is((candidates || []).length, 3)
+  await buildCurateCandidates(db, {}, freshData, feedProbe)
+  const candidates = await getCandidates(db)
+  t.is(candidates.length, 3)
 })
 
 test('buildCurateCandidates: updates score for existing candidate', async t => {
-  const kv = makeKv({
-    'discover:curate-candidates': [{ domain: 'known.com', feedUrl: 'https://known.com/feed', score: 1, sources: ['https://old.com/feed'] }]
+  const db = makeDb({
+    candidates: [{ domain: 'known.com', feedUrl: 'https://known.com/feed', score: 1, sources: ['https://old.com/feed'] }]
   })
   const freshData = makeFreshData([
     ['https://new1.com/feed', ['https://known.com/post']],
     ['https://new2.com/feed', ['https://known.com/post']]
   ])
-  await buildCurateCandidates(kv, {}, freshData, noProbe)
-  const candidates = await kv.get('discover:curate-candidates', { type: 'json' })
-  const entry = (candidates || []).find(c => c.domain === 'known.com')
+  await buildCurateCandidates(db, {}, freshData, noProbe)
+  const candidates = await getCandidates(db)
+  const entry = candidates.find(c => c.domain === 'known.com')
   t.ok(entry)
   t.is(entry.score, 2)
 })

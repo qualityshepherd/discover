@@ -223,10 +223,6 @@ test('isClickThrough: false when one post has >100 chars of text', t => {
 const noProbe = async () => null
 const feedProbe = async () => 'https://found.example.com/feed'
 
-const makeSourceIndex = (urls) => Object.fromEntries(
-  urls.map(url => [makeId(url), { url }])
-)
-
 const makePost = (links) => ({
   content: links.map(href => `<a href="${href}">link</a>`).join(' ')
 })
@@ -277,15 +273,14 @@ const makeDb = ({ candidates: initCandidates = [], dismissed: initDismissed = []
 
 test('buildCurateCandidates: does nothing with empty freshData', async t => {
   const db = makeDb()
-  await buildCurateCandidates(db, {}, new Map(), noProbe)
+  await buildCurateCandidates(db, [], new Map(), noProbe)
   t.is((await getCandidates(db)).length, 0)
 })
 
-test('buildCurateCandidates: skips domains already in sourceIndex', async t => {
+test('buildCurateCandidates: skips domains already in sourceUrls', async t => {
   const db = makeDb()
-  const sourceIndex = makeSourceIndex(['https://known.com/feed'])
   const freshData = makeFreshData([['https://source.com/feed', ['https://known.com/some-post']]])
-  await buildCurateCandidates(db, sourceIndex, freshData, noProbe)
+  await buildCurateCandidates(db, ['https://known.com/feed'], freshData, noProbe)
   const candidates = await getCandidates(db)
   t.falsy(candidates.find(c => c.domain === 'known.com'))
 })
@@ -293,7 +288,7 @@ test('buildCurateCandidates: skips domains already in sourceIndex', async t => {
 test('buildCurateCandidates: skips dismissed domains', async t => {
   const db = makeDb({ dismissed: ['dismissed.com'] })
   const freshData = makeFreshData([['https://source.com/feed', ['https://dismissed.com/post']]])
-  await buildCurateCandidates(db, {}, freshData, noProbe)
+  await buildCurateCandidates(db, [], freshData, noProbe)
   const candidates = await getCandidates(db)
   t.falsy(candidates.find(c => c.domain === 'dismissed.com'))
 })
@@ -301,7 +296,7 @@ test('buildCurateCandidates: skips dismissed domains', async t => {
 test('buildCurateCandidates: skips video domains', async t => {
   const db = makeDb()
   const freshData = makeFreshData([['https://source.com/feed', ['https://youtube.com/watch?v=123']]])
-  await buildCurateCandidates(db, {}, freshData, noProbe)
+  await buildCurateCandidates(db, [], freshData, noProbe)
   const candidates = await getCandidates(db)
   t.falsy(candidates.find(c => c.domain === 'youtube.com'))
 })
@@ -309,7 +304,7 @@ test('buildCurateCandidates: skips video domains', async t => {
 test('buildCurateCandidates: skips social/noise domains', async t => {
   const db = makeDb()
   const freshData = makeFreshData([['https://source.com/feed', ['https://twitter.com/user', 'https://reddit.com/r/foo']]])
-  await buildCurateCandidates(db, {}, freshData, noProbe)
+  await buildCurateCandidates(db, [], freshData, noProbe)
   const candidates = await getCandidates(db)
   t.falsy(candidates.find(c => c.domain === 'twitter.com' || c.domain === 'reddit.com'))
 })
@@ -317,7 +312,7 @@ test('buildCurateCandidates: skips social/noise domains', async t => {
 test('buildCurateCandidates: skips self-links', async t => {
   const db = makeDb()
   const freshData = makeFreshData([['https://source.com/feed', ['https://source.com/other-post']]])
-  await buildCurateCandidates(db, {}, freshData, noProbe)
+  await buildCurateCandidates(db, [], freshData, noProbe)
   const candidates = await getCandidates(db)
   t.falsy(candidates.find(c => c.domain === 'source.com'))
 })
@@ -329,7 +324,7 @@ test('buildCurateCandidates: scores by source diversity', async t => {
     ['https://b.com/feed', ['https://target.com/post']],
     ['https://c.com/feed', ['https://target.com/post']]
   ])
-  await buildCurateCandidates(db, {}, freshData, feedProbe)
+  await buildCurateCandidates(db, [], freshData, feedProbe)
   const candidates = await getCandidates(db)
   const entry = candidates.find(c => c.domain === 'target.com')
   t.ok(entry)
@@ -340,7 +335,7 @@ test('buildCurateCandidates: scores by source diversity', async t => {
 test('buildCurateCandidates: probe returning feed url goes to candidates', async t => {
   const db = makeDb()
   const freshData = makeFreshData([['https://source.com/feed', ['https://newblog.com/post']]])
-  await buildCurateCandidates(db, {}, freshData, feedProbe)
+  await buildCurateCandidates(db, [], freshData, feedProbe)
   const candidates = await getCandidates(db)
   const entry = candidates.find(c => c.domain === 'newblog.com')
   t.ok(entry)
@@ -356,7 +351,7 @@ test('buildCurateCandidates: limits new probes to 3', async t => {
       [`https://src2-${d}/feed`, [`https://${d}/other`]]
     ])
   )
-  await buildCurateCandidates(db, {}, freshData, feedProbe)
+  await buildCurateCandidates(db, [], freshData, feedProbe)
   const candidates = await getCandidates(db)
   t.is(candidates.length, 3)
 })
@@ -369,7 +364,7 @@ test('buildCurateCandidates: updates score for existing candidate', async t => {
     ['https://new1.com/feed', ['https://known.com/post']],
     ['https://new2.com/feed', ['https://known.com/post']]
   ])
-  await buildCurateCandidates(db, {}, freshData, noProbe)
+  await buildCurateCandidates(db, [], freshData, noProbe)
   const candidates = await getCandidates(db)
   const entry = candidates.find(c => c.domain === 'known.com')
   t.ok(entry)

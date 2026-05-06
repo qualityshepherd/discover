@@ -1,10 +1,10 @@
 import { parseFeed } from './feedParser.js'
 import {
-  makeId, getFeeds, getSourceIndex, getSourceData, saveSourceData, saveFeeds,
+  makeId, getFeeds, saveFeed, getSourceData, saveSourceData,
   updateSourceMeta, updateMentionCounts,
   getBlocked, getMentions, saveMentions,
   getDismissedDomains, getCandidates, saveCandidates,
-  setCronState,
+  getCronState, setCronState, getAllSourceUrls, getStaleSourceMeta,
   listCurators, deleteCurator, isCuratorInactive
 } from './discover-db.js'
 
@@ -98,30 +98,20 @@ export const applySourceDatas = (feed, sourceDatas, { keepOnEmpty = false } = {}
   feed.updateFrequency = computeFrequency(allPosts) ?? feed.updateFrequency ?? null
 }
 
-export const buildLinkGraph = async (db, sourceIndex, freshData) => {
+export const buildLinkGraph = async (db, sourceUrls, freshData) => {
   if (!freshData.size) return
 
   const domainToSource = new Map()
-  for (const entry of Object.values(sourceIndex)) {
+  for (const url of sourceUrls) {
     try {
-      const host = new URL(entry.url).hostname
-      domainToSource.set(host, entry.url)
+      const host = new URL(url).hostname
+      domainToSource.set(host, url)
       const bare = host.replace(/^www\./, '')
-      if (bare !== host) domainToSource.set(bare, entry.url)
+      if (bare !== host) domainToSource.set(bare, url)
     } catch {}
   }
 
-  // domain → all sourceIndex hashes for that domain (for mentionCount updates)
-  const domainToHashes = new Map()
-  for (const [hash, entry] of Object.entries(sourceIndex)) {
-    try {
-      const d = new URL(entry.url).hostname.replace(/^www\./, '')
-      if (!domainToHashes.has(d)) domainToHashes.set(d, [])
-      domainToHashes.get(d).push(hash)
-    } catch {}
-  }
-
-  const byTarget = new Map() // targetDomainHash → mention[]
+  const byTarget = new Map()
 
   for (const [sourceUrl, data] of freshData) {
     if (!data?.posts?.length) continue
@@ -135,16 +125,14 @@ export const buildLinkGraph = async (db, sourceIndex, freshData) => {
       for (const [, href] of post.content.matchAll(/href=["']([^"']+)["']/g)) {
         try {
           const domain = new URL(href).hostname.replace(/^www\./, '')
-          if (domain === fromDomain) continue // skip self-links
-          if (VIDEO_DOMAINS.has(domain)) continue // skip youtube
-          if (!domainToSource.get(domain)) continue // only include discover sources
           if (domain === fromDomain) continue
-          const targetHash = domain
-          const dedupeKey = `${fromHash}:${post.url}:${targetHash}`
+          if (VIDEO_DOMAINS.has(domain)) continue
+          if (!domainToSource.has(domain)) continue
+          const dedupeKey = `${fromHash}:${post.url}:${domain}`
           if (seenInPost.has(dedupeKey)) continue
           seenInPost.add(dedupeKey)
-          if (!byTarget.has(targetHash)) byTarget.set(targetHash, [])
-          byTarget.get(targetHash).push({
+          if (!byTarget.has(domain)) byTarget.set(domain, [])
+          byTarget.get(domain).push({
             fromSource: sourceUrl,
             fromPost: post.url,
             fromTitle: post.title || '',
@@ -161,21 +149,16 @@ export const buildLinkGraph = async (db, sourceIndex, freshData) => {
   if (!byTarget.size) return
 
   const mentionCountChanges = []
-  await Promise.all([...byTarget.entries()].map(async ([targetHash, newItems]) => {
-    const existing = await getMentions(db, targetHash)
+  await Promise.all([...byTarget.entries()].map(async ([domain, newItems]) => {
+    const existing = await getMentions(db, domain)
     const newKeys = new Set(newItems.map(m => `${m.fromSource}:${m.fromPost}`))
     const kept = existing.filter(m => !newKeys.has(`${m.fromSource}:${m.fromPost}`))
     const updated = [...kept, ...newItems]
       .sort((a, b) => new Date(b.foundAt) - new Date(a.foundAt))
       .slice(0, 100)
-    await saveMentions(db, targetHash, updated)
-    const hashes = domainToHashes.get(targetHash) || []
-    for (const h of hashes) {
-      if (sourceIndex[h]) {
-        sourceIndex[h].mentionCount = updated.length
-        mentionCountChanges.push({ url: sourceIndex[h].url, count: updated.length })
-      }
-    }
+    await saveMentions(db, domain, updated)
+    const sourceUrl = domainToSource.get(domain)
+    if (sourceUrl) mentionCountChanges.push({ url: sourceUrl, count: updated.length })
   }))
 
   if (mentionCountChanges.length) await updateMentionCounts(db, mentionCountChanges)
@@ -215,15 +198,12 @@ const probeFeedUrl = async (domain) => {
   return null
 }
 
-export const buildCurateCandidates = async (db, sourceIndex, freshData, _probe = probeFeedUrl) => {
+export const buildCurateCandidates = async (db, sourceUrls, freshData, _probe = probeFeedUrl) => {
   if (!freshData.size) return
 
   const knownDomains = new Set()
-  for (const entry of Object.values(sourceIndex)) {
-    try {
-      const h = new URL(entry.url).hostname.replace(/^www\./, '')
-      knownDomains.add(h)
-    } catch {}
+  for (const url of sourceUrls) {
+    try { knownDomains.add(new URL(url).hostname.replace(/^www\./, '')) } catch {}
   }
 
   const dismissed = new Set(await getDismissedDomains(db))
@@ -291,24 +271,18 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
   if (!allFeeds?.length) return { processed: 0, skipped: 0 }
 
   const now = Date.now()
-  const sourceIndex = await getSourceIndex(db)
-  const allSourceUrls = [...new Set(allFeeds.flatMap(f => f.sources || []))]
+  const sourceMetas = await getStaleSourceMeta(db)
 
-  const due = allSourceUrls
-    .map(url => {
-      const entry = sourceIndex[makeId(url)] || {}
-      const t = entry.lastFetched ? new Date(entry.lastFetched).getTime() : 0
-      return { url, t, staleMs: staleMsFor(entry.frequency) }
-    })
+  const due = sourceMetas
+    .map(m => ({ url: m.url, t: m.lastFetched ? new Date(m.lastFetched).getTime() : 0, staleMs: staleMsFor(m.frequency), image: m.image, latestPostUrl: m.latestPostUrl }))
     .filter(({ t, staleMs }) => force || now - t >= staleMs)
     .sort((a, b) => a.t - b.t)
     .slice(0, MAX_FETCHES_PER_RUN)
 
   const freshData = new Map()
 
-  for (const { url } of due) {
-    const hash = makeId(url)
-    const entry = sourceIndex[hash] || {}
+  for (const entry of due) {
+    const { url } = entry
     const result = await fetchSource(url, 10)
 
     if (result.posts) {
@@ -321,16 +295,13 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
       const data = { url, siteUrl: result.siteUrl || null, posts, image, frequency, statusCode: result.statusCode, error: null, lastFetched: new Date(now).toISOString() }
       if (changed) {
         await saveSourceData(db, url, data)
-        freshData.set(url, data)
       } else {
         await updateSourceMeta(db, url, { statusCode: result.statusCode, error: null, frequency, lastFetched: new Date(now).toISOString() })
-        freshData.set(url, data)
       }
-      sourceIndex[hash] = { ...entry, url, lastFetched: new Date(now).toISOString(), statusCode: result.statusCode, error: null, hasPosts: posts.length > 0, latestPostUrl, latestPostDate: posts[0]?.date || entry.latestPostDate || null, image, frequency: frequency || entry.frequency || null, addedAt: entry.addedAt || new Date(now).toISOString() }
+      freshData.set(url, data)
     } else {
       // fetch failed — update metadata only, leave posts untouched
       await updateSourceMeta(db, url, { statusCode: result.statusCode ?? 0, error: result.error || null, lastFetched: new Date(now).toISOString() })
-      sourceIndex[hash] = { ...entry, url, lastFetched: new Date(now).toISOString(), statusCode: result.statusCode ?? 0, error: result.error || null, addedAt: entry.addedAt || new Date(now).toISOString() }
       const existing = await getSourceData(db, url)
       if (existing) freshData.set(url, existing)
     }
@@ -353,23 +324,24 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
     feed.lastUpdated = new Date(now).toISOString()
     changedFeeds.push(feed)
   }
-  if (changedFeeds.length) await saveFeeds(db, allFeeds, changedFeeds)
+  if (changedFeeds.length) await Promise.all(changedFeeds.map(f => saveFeed(db, f)))
 
-  await buildLinkGraph(db, sourceIndex, freshData).catch(err => console.error('buildLinkGraph failed:', err))
-  await buildCurateCandidates(db, sourceIndex, freshData).catch(err => console.error('buildCurateCandidates failed:', err))
+  const allSourceUrls = await getAllSourceUrls(db)
+  await buildLinkGraph(db, allSourceUrls, freshData).catch(err => console.error('buildLinkGraph failed:', err))
+  await buildCurateCandidates(db, allSourceUrls, freshData).catch(err => console.error('buildCurateCandidates failed:', err))
   await pruneCurators(db).catch(err => console.error('pruneCurators failed:', err))
 
   await setCronState(db, 'cron:lastOk', new Date().toISOString())
 
   if (env.R2) {
     const today = new Date().toISOString().slice(0, 10)
-    const key = `backup/discover-${today}.json`
-    const existing = await env.R2.head(key).catch(() => null)
-    if (!existing) {
+    const lastBackup = await getCronState(db, 'cron:lastBackup')
+    if (lastBackup !== today) {
       const [feeds, blocked] = await Promise.all([getFeeds(db), getBlocked(db)])
-      await env.R2.put(key, JSON.stringify({ date: today, feeds: feeds || [], blocked: blocked || [] }), {
+      await env.R2.put(`backup/discover-${today}.json`, JSON.stringify({ date: today, feeds: feeds || [], blocked: blocked || [] }), {
         httpMetadata: { contentType: 'application/json' }
       })
+      await setCronState(db, 'cron:lastBackup', today)
     }
   }
 

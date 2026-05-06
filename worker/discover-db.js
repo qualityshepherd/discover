@@ -8,17 +8,6 @@ export const makeId = (url) => {
   return Math.abs(h).toString(36)
 }
 
-// Constants kept for compatibility with callers that import them
-export const KV_INDEX = 'discover:index'
-export const KV_PREFIX = 'discover:feed:'
-export const KV_FEEDS_LIST = 'discover:feeds-list'
-export const KV_SOURCE_INDEX = 'discover:source-index'
-export const KV_SOURCE_PREFIX = 'discover:source:'
-export const KV_PENDING = 'discover:pending'
-export const KV_BLOCKED = 'discover:blocked'
-export const KV_CURATE_CANDIDATES = 'discover:curate-candidates'
-export const KV_DISMISSED_DOMAINS = 'discover:dismissed-domains'
-
 // ── Feeds ────────────────────────────────────────────────────────────────────
 
 const rowToFeed = (row, sources = []) => {
@@ -102,22 +91,27 @@ export const saveFeed = async (db, feed) => {
     addedAt || new Date().toISOString()
   ).run()
 
-  // Replace sources
-  const stmts = [db.prepare('DELETE FROM feed_sources WHERE feed_id = ?').bind(id)]
+  // Replace sources + sync FTS index
+  const stmts = [
+    db.prepare('DELETE FROM feed_sources WHERE feed_id = ?').bind(id),
+    db.prepare('DELETE FROM feeds_fts WHERE feed_id = ?').bind(id),
+    db.prepare('INSERT INTO feeds_fts (feed_id, title, description, tags, author) VALUES (?,?,?,?,?)').bind(
+      id, title || '', description || '', JSON.stringify(tags || []), author ? JSON.stringify(author) : ''
+    )
+  ]
   for (const url of sources) {
     stmts.push(db.prepare('INSERT OR IGNORE INTO feed_sources (feed_id, source_url) VALUES (?,?)').bind(id, url))
   }
   await db.batch(stmts)
 }
 
-export const saveFeeds = async (db, _allFeeds, updated) => {
-  for (const feed of updated) await saveFeed(db, feed)
-}
-
 // No separate index table in D1 — feeds table IS the index
 export const addToIndex = async (_db, _id) => {}
 export const removeFromIndex = async (db, id) => {
-  await db.prepare('DELETE FROM feeds WHERE id = ?').bind(id).run()
+  await db.batch([
+    db.prepare('DELETE FROM feeds WHERE id = ?').bind(id),
+    db.prepare('DELETE FROM feeds_fts WHERE feed_id = ?').bind(id)
+  ])
 }
 
 // ── Sources ──────────────────────────────────────────────────────────────────
@@ -182,57 +176,7 @@ export const deleteSourceData = async (db, url) => {
   await db.prepare('DELETE FROM sources WHERE url = ?').bind(url).run()
 }
 
-// Returns the same { [hash]: { url, lastFetched, ... } } shape as the KV source-index
-export const getSourceIndex = async (db) => {
-  const rows = await db.prepare(
-    'SELECT url, status_code, error, has_posts, latest_post_url, latest_post_date, image, frequency, mention_count, last_fetched, added_at FROM sources'
-  ).all()
-  const index = {}
-  for (const row of rows.results) {
-    index[makeId(row.url)] = {
-      url: row.url,
-      lastFetched: row.last_fetched || null,
-      statusCode: row.status_code || null,
-      error: row.error || null,
-      hasPosts: !!row.has_posts,
-      latestPostUrl: row.latest_post_url || null,
-      latestPostDate: row.latest_post_date || null,
-      image: row.image || null,
-      frequency: row.frequency || null,
-      addedAt: row.added_at,
-      mentionCount: row.mention_count || 0
-    }
-  }
-  return index
-}
-
-// Batch-upsert a mutated sourceIndex object (used by buildLinkGraph for mentionCount updates)
-export const saveSourceIndex = async (db, sourceIndex) => {
-  const entries = Object.values(sourceIndex)
-  if (!entries.length) return
-  const stmts = entries.map(e =>
-    db.prepare(`
-      INSERT INTO sources (url, status_code, error, has_posts, latest_post_url, latest_post_date, image, frequency, mention_count, last_fetched, added_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(url) DO UPDATE SET
-        status_code=excluded.status_code, error=excluded.error,
-        has_posts=excluded.has_posts, latest_post_url=excluded.latest_post_url,
-        latest_post_date=excluded.latest_post_date, image=excluded.image,
-        frequency=COALESCE(excluded.frequency, sources.frequency),
-        mention_count=excluded.mention_count, last_fetched=excluded.last_fetched
-    `).bind(
-      e.url, e.statusCode || null, e.error || null,
-      e.hasPosts ? 1 : 0, e.latestPostUrl || null, e.latestPostDate || null,
-      e.image || null, e.frequency || null, e.mentionCount || 0,
-      e.lastFetched || null, e.addedAt || new Date().toISOString()
-    )
-  )
-  for (let i = 0; i < stmts.length; i += 100) {
-    await db.batch(stmts.slice(i, i + 100))
-  }
-}
-
-// Targeted mentionCount updates — avoids full saveSourceIndex for buildLinkGraph
+// Targeted mentionCount updates — used by buildLinkGraph
 export const updateMentionCounts = async (db, changes) => {
   if (!changes.length) return
   const stmts = changes.map(({ url, count }) =>
@@ -474,6 +418,198 @@ export const setRateLimit = async (db, key, record) => {
 
 export const deleteRateLimit = async (db, key) => {
   await db.prepare('DELETE FROM rate_limits WHERE key=?').bind(key).run()
+}
+
+// All source URLs (lightweight — no JSON blobs)
+export const getAllSourceUrls = async (db) => {
+  const rows = await db.prepare('SELECT url FROM sources').all()
+  return rows.results.map(r => r.url)
+}
+
+// Fetch+frequency metadata for all sources in any feed — for cron stale check
+export const getStaleSourceMeta = async (db) => {
+  const rows = await db.prepare(`
+    SELECT fs.source_url AS url, s.last_fetched, s.frequency, s.latest_post_url, s.latest_post_date,
+           s.image, s.added_at, s.status_code, s.error, s.has_posts, s.mention_count
+    FROM (SELECT DISTINCT source_url FROM feed_sources) fs
+    LEFT JOIN sources s ON s.url = fs.source_url
+  `).all()
+  return rows.results.map(r => ({
+    url: r.url,
+    lastFetched: r.last_fetched || null,
+    frequency: r.frequency || null,
+    latestPostUrl: r.latest_post_url || null,
+    latestPostDate: r.latest_post_date || null,
+    image: r.image || null,
+    addedAt: r.added_at || null,
+    statusCode: r.status_code || null,
+    error: r.error || null,
+    hasPosts: !!r.has_posts,
+    mentionCount: r.mention_count || 0
+  }))
+}
+
+// Paginated + filtered feed list using keyset pagination.
+// cursor is base64-encoded { f, i, id } from the last row of the previous page.
+export const getFilteredFeeds = async (db, { tag, q, limit = 50, cursor } = {}) => {
+  const where = ['EXISTS (SELECT 1 FROM feed_sources WHERE feed_id = f.id)']
+  const params = []
+
+  if (tag) {
+    where.push('EXISTS (SELECT 1 FROM json_each(f.tags) jt WHERE jt.value = ?)')
+    params.push(tag)
+  }
+
+  if (q) {
+    const ftsQ = q.replace(/[^\w\s]/g, ' ').trim().split(/\s+/).filter(Boolean)
+      .map((t, i, a) => i === a.length - 1 ? t + '*' : t).join(' ')
+    const like = `%${q}%`
+    if (ftsQ) {
+      where.push('(f.id IN (SELECT feed_id FROM feeds_fts WHERE feeds_fts MATCH ?) OR EXISTS (SELECT 1 FROM feed_sources fs2 WHERE fs2.feed_id = f.id AND LOWER(fs2.source_url) LIKE LOWER(?)))')
+      params.push(ftsQ, like)
+    } else {
+      where.push('(LOWER(f.title) LIKE LOWER(?) OR LOWER(f.description) LIKE LOWER(?) OR LOWER(f.tags) LIKE LOWER(?))')
+      params.push(like, like, like)
+    }
+  }
+
+  let cur = null
+  if (cursor) { try { cur = JSON.parse(atob(cursor)) } catch {} }
+  if (cur) {
+    where.push('((f.featured < ?) OR (f.featured = ? AND f.imports < ?) OR (f.featured = ? AND f.imports = ? AND f.id > ?))')
+    params.push(cur.f, cur.f, cur.i, cur.f, cur.i, cur.id)
+  }
+
+  const rows = await db.prepare(
+    `SELECT f.* FROM feeds f WHERE ${where.join(' AND ')} ORDER BY f.featured DESC, f.imports DESC, f.id ASC LIMIT ?`
+  ).bind(...params, limit + 1).all()
+
+  const hasMore = rows.results.length > limit
+  const feedRows = rows.results.slice(0, limit)
+  if (!feedRows.length) return { feeds: [], cursor: null }
+
+  const ids = feedRows.map(f => f.id)
+  const srcRows = []
+  for (let i = 0; i < ids.length; i += 99) {
+    const chunk = ids.slice(i, i + 99)
+    const r = await db.prepare(
+      `SELECT feed_id, source_url FROM feed_sources WHERE feed_id IN (${chunk.map(() => '?').join(',')}) ORDER BY added_at`
+    ).bind(...chunk).all()
+    srcRows.push(...r.results)
+  }
+  const byFeed = {}
+  for (const { feed_id: fid, source_url: surl } of srcRows) {
+    if (!byFeed[fid]) byFeed[fid] = []
+    byFeed[fid].push(surl)
+  }
+
+  const last = feedRows[feedRows.length - 1]
+  const nextCursor = hasMore ? btoa(JSON.stringify({ f: last.featured, i: last.imports, id: last.id })) : null
+  return { feeds: feedRows.map(row => rowToFeed(row, byFeed[row.id] || [])), cursor: nextCursor }
+}
+
+// Tag counts across all feeds — for the tag cloud
+export const getTagCounts = async (db) => {
+  const rows = await db.prepare(
+    'SELECT jt.value AS tag, COUNT(*) AS count FROM feeds f, json_each(f.tags) jt GROUP BY jt.value ORDER BY count DESC, jt.value ASC'
+  ).all()
+  return rows.results.map(r => ({ tag: r.tag, count: r.count }))
+}
+
+// Whether any source was added after cutoffIso
+export const hasNewSources = async (db, cutoffIso) => {
+  const row = await db.prepare('SELECT 1 FROM sources WHERE added_at > ? LIMIT 1').bind(cutoffIso).first()
+  return !!row
+}
+
+// { [domain]: maxMentionCount } for sources with at least one mention
+export const getSourceMentionCounts = async (db) => {
+  const rows = await db.prepare('SELECT url, mention_count FROM sources WHERE mention_count > 0').all()
+  const counts = {}
+  for (const { url, mention_count: mc } of rows.results) {
+    try {
+      const domain = new URL(url).hostname.replace(/^www\./, '')
+      counts[domain] = Math.max(counts[domain] || 0, mc)
+    } catch {}
+  }
+  return counts
+}
+
+// Latest post per source, ordered by date — for the /new view
+// Only includes sources referenced by at least one feed. Deduped by source URL.
+export const getNewestSourcePosts = async (db) => {
+  const rows = await db.prepare(`
+    SELECT s.url, s.posts, fs.feed_id, f.title AS feed_title, f.id AS playlist_id
+    FROM sources s
+    JOIN feed_sources fs ON s.url = fs.source_url
+    JOIN feeds f ON fs.feed_id = f.id
+    WHERE s.has_posts = 1
+    ORDER BY s.latest_post_date DESC
+  `).all()
+  const seen = new Set()
+  return rows.results
+    .filter(r => { if (seen.has(r.url)) return false; seen.add(r.url); return true })
+    .map(r => ({
+      url: r.url,
+      posts: JSON.parse(r.posts || '[]'),
+      playlist: { title: r.feed_title, id: r.playlist_id }
+    }))
+}
+
+// 99 random sources with one post each, deduped by source URL
+export const getRandomSourcePosts = async (db) => {
+  const rows = await db.prepare(`
+    SELECT s.posts, f.title AS feed_title, f.id AS feed_id
+    FROM sources s
+    JOIN (SELECT source_url, MIN(feed_id) AS feed_id FROM feed_sources GROUP BY source_url) fs ON s.url = fs.source_url
+    JOIN feeds f ON f.id = fs.feed_id
+    WHERE s.has_posts = 1
+    ORDER BY RANDOM()
+    LIMIT 99
+  `).all()
+  return rows.results.map(r => ({
+    posts: JSON.parse(r.posts || '[]'),
+    playlist: { title: r.feed_title, id: r.feed_id }
+  }))
+}
+
+// Whether a URL exists in any feed's sources
+export const isFeedSource = async (db, url) => {
+  const row = await db.prepare('SELECT 1 FROM feed_sources WHERE source_url = ? LIMIT 1').bind(url).first()
+  return !!row
+}
+
+// Whether a URL is in any feed OTHER than excludeFeedId
+export const isSourceReferencedElsewhere = async (db, url, excludeFeedId) => {
+  const row = await db.prepare(
+    'SELECT 1 FROM feed_sources WHERE source_url = ? AND feed_id != ? LIMIT 1'
+  ).bind(url, excludeFeedId).first()
+  return !!row
+}
+
+// All feeds that contain a given source URL — for bulk rename/delete operations
+export const getFeedsBySourceUrl = async (db, url) => {
+  const feedRows = await db.prepare(`
+    SELECT f.* FROM feeds f
+    JOIN feed_sources fs ON f.id = fs.feed_id
+    WHERE fs.source_url = ?
+  `).bind(url).all()
+  if (!feedRows.results.length) return []
+  const ids = feedRows.results.map(f => f.id)
+  const srcRows = []
+  for (let i = 0; i < ids.length; i += 99) {
+    const chunk = ids.slice(i, i + 99)
+    const r = await db.prepare(
+      `SELECT feed_id, source_url FROM feed_sources WHERE feed_id IN (${chunk.map(() => '?').join(',')}) ORDER BY added_at`
+    ).bind(...chunk).all()
+    srcRows.push(...r.results)
+  }
+  const byFeed = {}
+  for (const { feed_id: fid, source_url: surl } of srcRows) {
+    if (!byFeed[fid]) byFeed[fid] = []
+    byFeed[fid].push(surl)
+  }
+  return feedRows.results.map(row => rowToFeed(row, byFeed[row.id] || []))
 }
 
 // ── Pure logic helpers (unchanged from discover-kv.js) ───────────────────────

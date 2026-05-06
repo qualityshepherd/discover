@@ -16,7 +16,6 @@ const dcEntryRow = (e) => {
       <button class="dc-playlist-toggle post-row-title truncate" data-action="edit">${escHtml(e.title)}</button>
       ${dcFreqBadge(e)}
       <span class="dc-badge${sourceCount === 0 ? ' dc-badge-danger' : ''}">${sourceCount} feeds</span>
-      <span class="post-row-meta" title="imports">${e.imports || 0} ↓</span>
       <div class="post-row-actions">
         <a href="/discover/${escHtml(e.id)}" target="_blank" rel="noopener" class="icon-btn" aria-label="View">${ICON_EXTERNAL}</a>
         <button class="icon-btn" data-action="refresh" aria-label="Refresh playlist">${ICON_REFRESH}</button>
@@ -139,6 +138,7 @@ async function renderDcSources () {
       </select>
       <div class="post-row-actions">
         <a href="${escHtml(s.url)}" target="_blank" rel="noopener" class="icon-btn" aria-label="Open feed">${ICON_EXTERNAL}</a>
+        <button class="icon-btn dc-source-refresh" data-url="${escHtml(s.url)}" aria-label="Refresh source" title="Refresh · ${s.lastFetched ? timeAgo(s.lastFetched) : 'never fetched'}">${ICON_REFRESH}</button>
         <button class="icon-btn danger dc-source-delete" data-url="${escHtml(s.url)}" aria-label="Delete source">${ICON_TRASH}</button>
       </div>
     </div>`
@@ -152,6 +152,18 @@ async function renderDcSources () {
       const res = await api('POST', `/api/discover/admin/${playlistId}/sources`, { url: sel.dataset.url })
       if (res.error) { alert(res.error); return }
       await renderDcEntries()
+    })
+  })
+
+  el.querySelectorAll('.dc-source-refresh').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.classList.add('spinning')
+      btn.disabled = true
+      const res = await api('POST', '/api/discover/admin/source/refresh', { url: btn.dataset.url })
+      btn.classList.remove('spinning')
+      btn.disabled = false
+      if (res.error) { alert(res.error); return }
+      await renderDcSources()
     })
   })
 

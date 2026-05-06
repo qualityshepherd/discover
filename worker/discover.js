@@ -129,7 +129,7 @@ const handlePlaylistRss = async (kv, id, reqUrl) => {
   return new Response(xml, {
     headers: {
       'Content-Type': 'application/rss+xml; charset=utf-8',
-      'Cache-Control': 'public, max-age=1800'
+      'Cache-Control': 'no-store'
     }
   })
 }
@@ -731,7 +731,7 @@ export const handleMentionsFeed = async (kv, sourceId, reqUrl) => {
 </rss>`
 
   return new Response(xml, {
-    headers: { 'Content-Type': 'application/rss+xml; charset=utf-8', 'Cache-Control': 'public, max-age=3600' }
+    headers: { 'Content-Type': 'application/rss+xml; charset=utf-8', 'Cache-Control': 'no-store' }
   })
 }
 
@@ -1090,7 +1090,7 @@ export const handlePersonalRss = async (req, env, slug) => {
   return new Response(xml, {
     headers: {
       'Content-Type': 'application/rss+xml; charset=utf-8',
-      'Cache-Control': 'public, max-age=900'
+      'Cache-Control': 'no-store'
     }
   })
 }

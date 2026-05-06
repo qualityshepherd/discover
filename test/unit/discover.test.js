@@ -1,5 +1,6 @@
 import { unit as test } from '../testpup.js'
-import { computeFrequency, makeId, computeTags, isClickThrough } from '../../worker/discover.js'
+import { computeFrequency, makeId, computeTags } from '../../worker/discover.js'
+import { isClickThrough } from '../../worker/utils.js'
 import { buildCurateCandidates } from '../../worker/discover-cron.js'
 import {
   isBlocked,

@@ -1,3 +1,5 @@
+// RSS abuse is real! This is about that...
+
 export const safeUrl = (url) => {
   if (!url) return ''
   try {

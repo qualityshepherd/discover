@@ -1,6 +1,6 @@
 // Project-specific analytics for discover.
 // To fix bot detection, add RSS aggregators, or tweak the data model — edit analytics-core.js,
-// then copy it to brine and rando. Edit here only for discover-specific paths or RSS matchers.
+// Edit here only for discover-specific paths or RSS matchers.
 
 import ANALYTICS_TEMPLATE from './analyticsTemplate.js'
 import { isBot, isDatacenter, parseRssSubscribers, parseDevice, buildHit, hashIp, getSiteStub, handleAnalytics as _handleAnalytics } from './analytics-core.js'

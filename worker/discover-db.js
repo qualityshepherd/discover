@@ -579,8 +579,8 @@ export const hasNewSources = async (db, cutoffIso) => {
 export const getSourceMentionCounts = async (db) => {
   const rows = await db.prepare('SELECT to_domain, COUNT(*) AS cnt FROM mentions GROUP BY to_domain').all()
   const counts = {}
-  for (const { to_domain, cnt } of rows.results) {
-    counts[to_domain] = cnt
+  for (const row of rows.results) {
+    counts[row.to_domain] = row.cnt // eslint-disable-line camelcase
   }
   return counts
 }

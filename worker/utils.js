@@ -7,3 +7,11 @@ export const json = (data, status = 200) =>
 export const parseJsonBody = async (req) => {
   try { return await req.json() } catch { return null }
 }
+
+export const isClickThrough = (posts) => {
+  if (!posts?.length) return false
+  return !posts.some(p => {
+    const text = (p.content || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim()
+    return text.length > 100
+  })
+}

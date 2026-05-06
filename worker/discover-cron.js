@@ -10,7 +10,6 @@ import {
 
 export const VIDEO_DOMAINS = new Set(['youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv', 'rumble.com'])
 
-
 // Extract the human site URL from RSS/Atom XML (not the feed URL itself)
 const parseSiteUrl = (xml) => {
   // Atom: <link rel="alternate" href="...">
@@ -260,6 +259,7 @@ export const checkDiscoverFeeds = async (env) => {
   const due = sourceMetas.map(m => ({ url: m.url, image: m.image, latestPostUrl: m.latestPostUrl }))
 
   const freshData = new Map()
+  const now = Date.now()
 
   for (const entry of due) {
     const { url } = entry

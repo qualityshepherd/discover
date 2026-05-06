@@ -20,7 +20,6 @@ export const avatarLetter = (title) =>
     .map(w => w.charAt(0).toUpperCase())
     .join('')
 
-
 export const renderCard = (entry) => {
   const sourceCount = (entry.sources || []).length
   const freq = entry.updateFrequency && entry.updateFrequency !== 'unknown' ? entry.updateFrequency : ''

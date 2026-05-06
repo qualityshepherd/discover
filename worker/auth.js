@@ -1,3 +1,5 @@
+// ed25519 is the shiznit... I see you quantum. Let's see how this pans out first tho...
+
 import {
   verifyChallenge, makeSession, isSessionValid,
   isValidToken, scorePassphrase

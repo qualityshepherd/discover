@@ -1,6 +1,5 @@
-// Core analytics — shared across discover, brine, rando (feedi TBD).
+// Core analytics...
 // Fix bot patterns, add RSS aggregators, tweak data model here.
-// After changing this file, copy it to the same path in every project.
 // Do NOT add project-specific paths, cookies, or RSS matchers here — those live in analytics.js.
 
 const BOT_PREFIXES = [

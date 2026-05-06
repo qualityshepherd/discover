@@ -239,6 +239,8 @@ async function renderDcSources () {
         (status === 'ok' && cls.includes('status-ok')) ||
         (status === 'warn' && cls.includes('status-warn')) ||
         (status === 'error' && cls.includes('status-error')) ||
+        (status === 'inactive' && cls.includes('status-inactive')) ||
+        (status === 'dead' && cls.includes('status-dead')) ||
         (status === 'null' && cls.includes('status-null'))
       row.style.display = matchQ && matchP && matchS ? '' : 'none'
     })

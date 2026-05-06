@@ -45,24 +45,37 @@ const renderBrowse = (entries, tags) => {
   cards.innerHTML = [...featured, ...rest].map(renderCard).join('')
 }
 
-const filterAndRender = () => {
+const filterAndRender = async () => {
   closeDrawer()
-  const search = document.getElementById('discover-search').value.toLowerCase()
-  let results = allEntries
-  if (activeTags.size) results = results.filter(e => [...activeTags].every(t => e.tags?.includes(t)))
-  if (search) {
-    results = results.filter(e =>
-      e.title.toLowerCase().includes(search) ||
-      e.description?.toLowerCase().includes(search) ||
-      e.tags?.some(t => t.includes(search)) ||
-      (e.sources || []).some(s => s.toLowerCase().includes(search))
-    )
-  }
-  renderTagCloud(allTags)
+  const q = document.getElementById('discover-search').value.trim()
+  syncUrl()
 
   const cards = document.getElementById('discover-cards')
-  cards.innerHTML = results.length ? results.map(renderCard).join('') : '<p class="muted">no feeds found.</p>'
-  syncUrl()
+
+  if (q || activeTags.size) {
+    cards.innerHTML = '<p class="muted">searching…</p>'
+    const params = new URLSearchParams()
+    if (q) params.set('q', q)
+    if (activeTags.size) params.set('tag', [...activeTags][0])
+    const results = await fetch(`/api/discover/search?${params}`).then(r => r.json()).catch(() => [])
+    let filtered = results
+    if (activeTags.size > 1) {
+      filtered = results.filter(s =>
+        [...activeTags].every(tag => (s.playlists || []).some(p => (p.tags || []).includes(tag)))
+      )
+    }
+    renderTagCloud(allTags)
+    if (!filtered.length) { cards.innerHTML = '<p class="muted">no results.</p>'; return }
+    cards.innerHTML = filtered.map(feedsItemTemplate).join('')
+    injectSourceFollowButtons(cards)
+    injectMentionsLinks(cards, mentionCounts)
+    setFeedContext(filtered)
+    initModal()
+    return
+  }
+
+  renderTagCloud(allTags)
+  cards.innerHTML = allEntries.length ? allEntries.map(renderCard).join('') : '<p class="muted">no feeds found.</p>'
 }
 
 const syncUrl = () => {
@@ -92,7 +105,7 @@ const loadBrowse = async () => {
   mentionCounts = data.mentionCounts || {}
 
   renderBrowse(allEntries, data.tags || [])
-  if (activeTags.size || qParam) filterAndRender()
+  if (activeTags.size || qParam) await filterAndRender()
 }
 
 const onFeedClick = (e) => {
@@ -291,7 +304,11 @@ const route = () => {
 
 // events
 
-document.getElementById('discover-search').addEventListener('input', () => filterAndRender())
+let searchDebounce = null
+document.getElementById('discover-search').addEventListener('input', () => {
+  clearTimeout(searchDebounce)
+  searchDebounce = setTimeout(filterAndRender, 300)
+})
 
 document.getElementById('btn-random').addEventListener('click', (e) => {
   e.preventDefault()

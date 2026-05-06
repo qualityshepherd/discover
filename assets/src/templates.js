@@ -33,9 +33,11 @@ export const feedsItemTemplate = (item) => {
   const text = blurb(item.content || '')
 
   const sourceName = `${item.author ? `${item.author} · ` : ''}${item.feed?.title || domain}`
-  const playlistBadge = item.fromPlaylist && item.fromPlaylistId
-    ? `<a class="feed-playlist-badge" href="/discover/${item.fromPlaylistId}">in: ${item.fromPlaylist}</a>`
-    : ''
+  const playlistBadge = item.playlists?.length
+    ? item.playlists.map(p => `<a class="feed-playlist-badge" href="/discover/${p.id}">${p.title}</a>`).join('')
+    : (item.fromPlaylist && item.fromPlaylistId
+        ? `<a class="feed-playlist-badge" href="/discover/${item.fromPlaylistId}">in: ${item.fromPlaylist}</a>`
+        : '')
 
   return `
   <div class="post feed-post" data-url="${url}" data-feed-url="${safeUrl(item.feed?.url || '')}">
@@ -53,7 +55,7 @@ export const feedsItemTemplate = (item) => {
         ${text ? `<p class="feed-blurb">${text}</p>` : ''}
       </div>
     </div>
-    ${playlistBadge}
+    ${playlistBadge ? `<div class="feed-playlists">${playlistBadge}</div>` : ''}
   </div>
   `
 }

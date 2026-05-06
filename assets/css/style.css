@@ -386,13 +386,20 @@ a.feed-source-name:hover {
   color: var(--color-accent);
 }
 
+.feed-playlists {
+  margin-top: var(--space-1);
+}
+
 .feed-playlist-badge {
-  display: block;
+  display: inline-block;
   font-size: var(--text-xs);
   color: var(--color-text-muted);
-  margin-top: var(--space-1);
   text-decoration: none;
-  text-align: right;
+}
+
+.feed-playlist-badge + .feed-playlist-badge::before {
+  content: ' · ';
+  white-space: pre;
 }
 
 .feed-playlist-badge:hover {

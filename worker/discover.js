@@ -6,7 +6,8 @@ import {
   getSourceData, saveSourceData, deleteSourceData,
   getSourceAllData,
   getFilteredFeeds, getTagCounts, hasNewSources, getSourceMentionCounts,
-  getNewestSourcePosts, getRandomSourcePosts, isFeedSource, isSourceReferencedElsewhere, getFeedsBySourceUrl,
+  getNewestSourcePosts, getRandomSourcePosts, searchSources,
+  isFeedSource, isSourceReferencedElsewhere, getFeedsBySourceUrl,
   getAllSourceUrls, getStaleSourceMeta,
   getPending, savePending, getBlocked, saveBlocked, isBlocked,
   getCurator, saveCurator, deleteCurator, listCurators, addToCuratorIndex,
@@ -753,6 +754,11 @@ export const handleDiscover = async (req, env) => {
   if (method === 'GET' && path === '/api/discover/new') return handleNew(db)
   if (method === 'POST' && path === '/api/discover/preview') return handlePreview(req, db)
   if (method === 'POST' && path === '/api/discover/submit') return handleSubmit(req, db)
+  if (method === 'GET' && path === '/api/discover/search') {
+    const q = url.searchParams.get('q')?.trim()
+    const tag = url.searchParams.get('tag') || undefined
+    return cors(json(await searchSources(db, { q, tag })))
+  }
 
   // /:id routes
   const idMatch = path.match(/^\/api\/discover\/([^/]+)$/)
@@ -854,14 +860,7 @@ export const handleDiscover = async (req, env) => {
 
   if (method === 'GET' && path === '/api/discover/admin/blocked') return handleBlockedList(db)
   if (method === 'PUT' && path === '/api/discover/admin/blocked') return handleBlockedSave(req, db)
-  if (method === 'POST' && path === '/api/discover/admin/build-curate-candidates') {
-    const sourceUrls = await getAllSourceUrls(db)
-    const sourceAll = await resolveSourceAll(db, sourceUrls)
-    const freshData = new Map(sourceUrls.map(u => [u, sourceAll[makeId(u)]]).filter(([, d]) => d))
-    await buildCurateCandidates(db, sourceUrls, freshData)
-    return json({ ok: true, sources: freshData.size })
-  }
-  if (method === 'POST' && path === '/api/discover/admin/build-link-graph') {
+if (method === 'POST' && path === '/api/discover/admin/build-link-graph') {
     const sourceUrls = await getAllSourceUrls(db)
     const sourceAll = await resolveSourceAll(db, sourceUrls)
     const freshData = new Map(sourceUrls.map(u => [u, sourceAll[makeId(u)]]).filter(([, d]) => d))
@@ -869,8 +868,7 @@ export const handleDiscover = async (req, env) => {
     return json({ ok: true, sources: freshData.size })
   }
   if (method === 'POST' && path === '/api/discover/admin/check') {
-    const body = await req.json().catch(() => ({}))
-    const result = await checkDiscoverFeeds(env, { force: !!body.force })
+    const result = await checkDiscoverFeeds(env)
     return json({ ok: true, ...result })
   }
   if (method === 'POST' && path === '/api/discover/admin/normalize-urls') {

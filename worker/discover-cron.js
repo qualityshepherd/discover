@@ -2,7 +2,7 @@ import { parseFeed } from './feedParser.js'
 import {
   makeId, getFeeds, saveFeed, getSourceData, saveSourceData,
   updateSourceMeta, updateMentionCounts,
-  getBlocked, getMentions, saveMentions,
+  getBlocked, getMentions, getMentionDomainsForSources, saveMentions,
   getDismissedDomains, getCandidates, saveCandidates,
   getCronState, setCronState, getAllSourceUrls, getStaleSourceMeta,
   listCurators, deleteCurator, isCuratorInactive
@@ -10,15 +10,6 @@ import {
 
 export const VIDEO_DOMAINS = new Set(['youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv', 'rumble.com'])
 
-const MAX_FETCHES_PER_RUN = 20
-
-const staleMsFor = (freq) => {
-  if (freq === 'daily') return 8 * 60 * 60 * 1000
-  if (freq === 'weekly') return 12 * 60 * 60 * 1000
-  if (freq === 'monthly') return 24 * 60 * 60 * 1000
-  if (freq === 'inactive') return 48 * 60 * 60 * 1000
-  return 12 * 60 * 60 * 1000 // unknown — treat as weekly until frequency is established
-}
 
 // Extract the human site URL from RSS/Atom XML (not the feed URL itself)
 const parseSiteUrl = (xml) => {
@@ -81,7 +72,7 @@ export const fetchAndSaveSource = async (db, url) => {
     posts = result.posts.slice(0, 3).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
     siteUrl = result.siteUrl || null
   }
-  const sourceData = { url, siteUrl, posts, image, frequency, statusCode: result.statusCode ?? null, error: result.error || null, lastFetched: new Date(now).toISOString() }
+  const sourceData = { url, siteUrl, posts, image, frequency, title: posts[0]?.feed?.title || null, statusCode: result.statusCode ?? null, error: result.error || null, lastFetched: new Date(now).toISOString() }
   const indexEntry = { url, lastFetched: sourceData.lastFetched, statusCode: sourceData.statusCode, error: sourceData.error, hasPosts: posts.length > 0, latestPostUrl: posts[0]?.url || null, latestPostDate: posts[0]?.date || null, image: sourceData.image, frequency: frequency || null, addedAt: new Date(now).toISOString() }
   await saveSourceData(db, url, sourceData)
   return { sourceData, indexEntry }
@@ -146,13 +137,22 @@ export const buildLinkGraph = async (db, sourceUrls, freshData) => {
     }
   }
 
+  // Also include domains that had mentions from fresh sources but no longer do —
+  // so we can clear their stale entries rather than leaving orphaned counts.
+  const freshSources = new Set([...freshData.keys()])
+  const staleDomains = await getMentionDomainsForSources(db, [...freshSources])
+  for (const domain of staleDomains) {
+    if (!byTarget.has(domain)) byTarget.set(domain, [])
+  }
+
   if (!byTarget.size) return
 
   const mentionCountChanges = []
   await Promise.all([...byTarget.entries()].map(async ([domain, newItems]) => {
     const existing = await getMentions(db, domain)
     const newKeys = new Set(newItems.map(m => `${m.fromSource}:${m.fromPost}`))
-    const kept = existing.filter(m => !newKeys.has(`${m.fromSource}:${m.fromPost}`))
+    // drop any existing mention whose source was just rescanned — newItems has the current truth
+    const kept = existing.filter(m => !newKeys.has(`${m.fromSource}:${m.fromPost}`) && !freshSources.has(m.fromSource))
     const updated = [...kept, ...newItems]
       .sort((a, b) => new Date(b.foundAt) - new Date(a.foundAt))
       .slice(0, 100)
@@ -265,19 +265,13 @@ export const pruneCurators = async (db) => {
   return { pruned: inactive.length }
 }
 
-export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
+export const checkDiscoverFeeds = async (env) => {
   const db = env.DISCOVER_DB
   const allFeeds = await getFeeds(db)
   if (!allFeeds?.length) return { processed: 0, skipped: 0 }
 
-  const now = Date.now()
   const sourceMetas = await getStaleSourceMeta(db)
-
-  const due = sourceMetas
-    .map(m => ({ url: m.url, t: m.lastFetched ? new Date(m.lastFetched).getTime() : 0, staleMs: staleMsFor(m.frequency), image: m.image, latestPostUrl: m.latestPostUrl }))
-    .filter(({ t, staleMs }) => force || now - t >= staleMs)
-    .sort((a, b) => a.t - b.t)
-    .slice(0, MAX_FETCHES_PER_RUN)
+  const due = sourceMetas.map(m => ({ url: m.url, image: m.image, latestPostUrl: m.latestPostUrl }))
 
   const freshData = new Map()
 
@@ -292,7 +286,7 @@ export const checkDiscoverFeeds = async (env, { force = false } = {}) => {
       const latestPostUrl = posts[0]?.url || null
       const changed = latestPostUrl !== entry.latestPostUrl || image !== entry.image
 
-      const data = { url, siteUrl: result.siteUrl || null, posts, image, frequency, statusCode: result.statusCode, error: null, lastFetched: new Date(now).toISOString() }
+      const data = { url, siteUrl: result.siteUrl || null, posts, image, frequency, title: posts[0]?.feed?.title || null, statusCode: result.statusCode, error: null, lastFetched: new Date(now).toISOString() }
       if (changed) {
         await saveSourceData(db, url, data)
       } else {

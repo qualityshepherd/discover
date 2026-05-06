@@ -1,19 +1,6 @@
 import { $, api, escHtml, timeAgo } from './admin-utils.js'
 
-const btn = document.getElementById('btn-curate-scan')
 const scanStatus = document.getElementById('curate-scan-status')
-if (btn) {
-  btn.addEventListener('click', async () => {
-    btn.disabled = true
-    btn.textContent = 'scanning…'
-    if (scanStatus) scanStatus.textContent = ''
-    const res = await api('POST', '/api/discover/admin/build-curate-candidates')
-    btn.disabled = false
-    btn.textContent = 'scan all sources'
-    if (scanStatus) scanStatus.textContent = res.error ? `error: ${res.error}` : `scanned ${res.sources} sources`
-    if (!res.error) await renderCurate()
-  })
-}
 
 const mentionsBtn = document.getElementById('btn-rebuild-mentions')
 if (mentionsBtn) {

@@ -139,21 +139,23 @@ export const saveSourceData = async (db, url, data) => {
   const latestPost = posts[0]
   await db.prepare(`
     INSERT INTO sources
-      (url, site_url, posts, image, status_code, error, frequency, has_posts, latest_post_url, latest_post_date, last_fetched)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+      (url, site_url, posts, image, status_code, error, frequency, has_posts, latest_post_url, latest_post_date, last_fetched, title)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(url) DO UPDATE SET
       site_url=excluded.site_url, posts=excluded.posts, image=excluded.image,
       status_code=excluded.status_code, error=excluded.error,
       frequency=COALESCE(excluded.frequency, sources.frequency),
       has_posts=excluded.has_posts, latest_post_url=excluded.latest_post_url,
-      latest_post_date=excluded.latest_post_date, last_fetched=excluded.last_fetched
+      latest_post_date=excluded.latest_post_date, last_fetched=excluded.last_fetched,
+      title=COALESCE(excluded.title, sources.title)
   `).bind(
     url, data.siteUrl || null, JSON.stringify(posts),
     data.image || null, data.statusCode ?? null, data.error || null,
     data.frequency || null,
     posts.length > 0 ? 1 : 0,
     latestPost?.url || null, latestPost?.date || null,
-    data.lastFetched || new Date().toISOString()
+    data.lastFetched || new Date().toISOString(),
+    data.title || latestPost?.feed?.title || null
   ).run()
 }
 
@@ -329,6 +331,19 @@ export const getMentions = async (db, domain) => {
     toUrl: r.to_url || '',
     foundAt: r.found_at
   }))
+}
+
+export const getMentionDomainsForSources = async (db, sourceUrls) => {
+  if (!sourceUrls.length) return []
+  const results = []
+  for (let i = 0; i < sourceUrls.length; i += 99) {
+    const chunk = sourceUrls.slice(i, i + 99)
+    const rows = await db.prepare(
+      `SELECT DISTINCT to_domain FROM mentions WHERE from_source IN (${chunk.map(() => '?').join(',')})`
+    ).bind(...chunk).all()
+    results.push(...rows.results.map(r => r.to_domain))
+  }
+  return results
 }
 
 export const saveMentions = async (db, domain, mentions) => {
@@ -508,6 +523,44 @@ export const getFilteredFeeds = async (db, { tag, q, limit = 50, cursor } = {}) 
   return { feeds: feedRows.map(row => rowToFeed(row, byFeed[row.id] || [])), cursor: nextCursor }
 }
 
+// Source-level search — returns individual blogs with their playlist memberships
+export const searchSources = async (db, { q, tag } = {}) => {
+  if (!q && !tag) return []
+  const where = ['s.has_posts = 1']
+  const params = []
+
+  if (q) {
+    const like = `%${q}%`
+    where.push('(LOWER(COALESCE(s.title, s.url)) LIKE LOWER(?) OR LOWER(s.url) LIKE LOWER(?))')
+    params.push(like, like)
+  }
+
+  if (tag) {
+    where.push('EXISTS (SELECT 1 FROM feed_sources fs2, feeds f2, json_each(f2.tags) jt WHERE fs2.source_url = s.url AND f2.id = fs2.feed_id AND jt.value = ?)')
+    params.push(tag)
+  }
+
+  const rows = await db.prepare(`
+    SELECT s.url, s.title, s.posts,
+           json_group_array(json_object('id', f.id, 'title', f.title, 'tags', json(COALESCE(f.tags, '[]')))) AS playlists
+    FROM sources s
+    JOIN feed_sources fs ON s.url = fs.source_url
+    JOIN feeds f ON f.id = fs.feed_id
+    WHERE ${where.join(' AND ')}
+    GROUP BY s.url
+    ORDER BY s.latest_post_date DESC
+    LIMIT 50
+  `).bind(...params).all()
+
+  return rows.results.flatMap(r => {
+    const posts = JSON.parse(r.posts || '[]')
+    const playlists = JSON.parse(r.playlists || '[]')
+    const post = posts[0]
+    if (!post) return []
+    return [{ ...post, fromPlaylist: playlists[0]?.title || r.title || r.url, fromPlaylistId: playlists[0]?.id || null, playlists }]
+  })
+}
+
 // Tag counts across all feeds — for the tag cloud
 export const getTagCounts = async (db) => {
   const rows = await db.prepare(
@@ -522,15 +575,12 @@ export const hasNewSources = async (db, cutoffIso) => {
   return !!row
 }
 
-// { [domain]: maxMentionCount } for sources with at least one mention
+// { [domain]: count } — live from mentions table, never stale
 export const getSourceMentionCounts = async (db) => {
-  const rows = await db.prepare('SELECT url, mention_count FROM sources WHERE mention_count > 0').all()
+  const rows = await db.prepare('SELECT to_domain, COUNT(*) AS cnt FROM mentions GROUP BY to_domain').all()
   const counts = {}
-  for (const { url, mention_count: mc } of rows.results) {
-    try {
-      const domain = new URL(url).hostname.replace(/^www\./, '')
-      counts[domain] = Math.max(counts[domain] || 0, mc)
-    } catch {}
+  for (const { to_domain, cnt } of rows.results) {
+    counts[to_domain] = cnt
   }
   return counts
 }

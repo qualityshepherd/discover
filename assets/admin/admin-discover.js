@@ -58,6 +58,13 @@ const dcEntryEdit = (e) => {
   </div>`
 }
 
+export async function loadCronStatus () {
+  const status = $('dc-check-status')
+  if (!status) return
+  const res = await api('GET', '/api/discover/admin/status')
+  status.textContent = res.lastCronOk ? `last run: ${timeAgo(res.lastCronOk)}` : 'never run'
+}
+
 export async function renderDcEntries () {
   const data = await api('GET', '/api/discover/admin/feeds')
   dcEntries = data.feeds || []
@@ -403,11 +410,10 @@ $('btn-dc-check').addEventListener('click', async () => {
   btn.textContent = 'refresh feeds'
   btn.disabled = false
   if (res.ok) {
-    const t = new Date().toLocaleTimeString()
-    status.textContent = `last run: ${t} — ${res.processed} refreshed`
-    await renderDcEntries()
+    status.textContent = 'last run: just now'
+    setTimeout(renderDcEntries, 5000)
   } else {
-    status.textContent = 'last run: failed'
+    status.textContent = 'failed'
   }
 })
 

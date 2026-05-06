@@ -104,47 +104,10 @@
   <div id="view-discover" class="hidden">
     <div class="view-header">
       <h2 class="view-title"><a href="/discover" target="_blank" rel="noopener">discover</a></h2>
-      <button id="btn-dc-check" class="btn btn-sm">refresh feeds</button>
-    </div>
-    <p id="dc-check-status"></p>
-
-    <!-- add playlist form -->
-    <div class="field">
-      <div class="row field">
-        <div class="field flex-2">
-          <label for="dc-title">title</label>
-          <input type="text" id="dc-title" placeholder="Playlist name">
-        </div>
-        <div class="field flex-2">
-          <label for="dc-tags">tags</label>
-          <input type="text" id="dc-tags" placeholder="design, essays, tech">
-        </div>
-        <div class="field flex-1">
-          <label for="dc-author-name">author</label>
-          <input type="text" id="dc-author-name" placeholder="name">
-        </div>
-        <div class="field flex-1">
-          <label for="dc-author-url">author url</label>
-          <input type="url" id="dc-author-url" placeholder="https://...">
-        </div>
+      <div class="flex items-center gap-3">
+        <span id="dc-check-status" class="muted" style="font-size:var(--text-xs)"></span>
+        <button id="btn-dc-check" class="btn btn-sm" style="white-space:nowrap">refresh feeds</button>
       </div>
-      <div class="field">
-        <label for="dc-description">description</label>
-        <input type="text" id="dc-description" placeholder="Short description">
-      </div>
-      <div class="flex gap-3 items-center">
-        <button class="btn btn-primary" id="btn-dc-add">add playlist</button>
-        <label class="label-inline">
-          <input type="checkbox" id="dc-featured"> featured
-        </label>
-        <span class="error hidden" id="dc-error"></span>
-      </div>
-    </div>
-
-    <!-- playlists -->
-    <div class="field mt-6">
-      <h3 class="view-subtitle">playlists <span id="dc-entries-count" class="muted"></span></h3>
-      <div id="dc-entries-list"></div>
     </div>
 
     <!-- sources -->
@@ -180,6 +143,46 @@
         <select id="dc-batch-playlist"><option value="">no playlist</option></select>
       </div>
       <div id="dc-batch-results"></div>
+    </div>
+
+    <!-- add playlist form -->
+    <div class="field mt-6">
+      <h3 class="view-subtitle">add playlist</h3>
+      <div class="row field">
+        <div class="field flex-2">
+          <label for="dc-title">title</label>
+          <input type="text" id="dc-title" placeholder="Playlist name">
+        </div>
+        <div class="field flex-2">
+          <label for="dc-tags">tags</label>
+          <input type="text" id="dc-tags" placeholder="design, essays, tech">
+        </div>
+        <div class="field flex-1">
+          <label for="dc-author-name">author</label>
+          <input type="text" id="dc-author-name" placeholder="name">
+        </div>
+        <div class="field flex-1">
+          <label for="dc-author-url">author url</label>
+          <input type="url" id="dc-author-url" placeholder="https://...">
+        </div>
+      </div>
+      <div class="field">
+        <label for="dc-description">description</label>
+        <input type="text" id="dc-description" placeholder="Short description">
+      </div>
+      <div class="flex gap-3 items-center">
+        <button class="btn btn-primary" id="btn-dc-add">add playlist</button>
+        <label class="label-inline">
+          <input type="checkbox" id="dc-featured"> featured
+        </label>
+        <span class="error hidden" id="dc-error"></span>
+      </div>
+    </div>
+
+    <!-- playlists -->
+    <div class="field mt-6">
+      <h3 class="view-subtitle">playlists <span id="dc-entries-count" class="muted"></span></h3>
+      <div id="dc-entries-list"></div>
     </div>
 
   </div>

@@ -53,7 +53,7 @@ export default {
     if (mentionsMatch) return handleMentionsFeed(env.DISCOVER_DB, mentionsMatch[1], req.url)
 
     // Discover routes — public except /admin sub-paths (auth handled inside)
-    if (path.startsWith('/api/discover')) return handleDiscover(req, env)
+    if (path.startsWith('/api/discover')) return handleDiscover(req, env, ctx)
 
     // Auth gate — all /api/* routes not in PUBLIC_API require a valid token
     if (path.startsWith('/api/') && !PUBLIC_API.has(path)) {

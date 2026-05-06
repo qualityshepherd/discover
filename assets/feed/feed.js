@@ -68,7 +68,7 @@ const load = async () => {
 
   if (!follows.length && !sourceFollows.length && !customFeeds.length) {
     allPosts = []
-    container.innerHTML = '<p class="muted">follow sources from <a href="/">discover</a>, add your favorite feed or import an OPML file.</p>'
+    container.innerHTML = '<p class="muted">Curate your own playlist! Follow sources from <a href="/">discover</a>, add external feeds or import an OPML file. Read it here (local storage) or take it with you via OPML.</p>'
     return
   }
 

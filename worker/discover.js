@@ -208,6 +208,7 @@ const handleNew = async (db) => {
   const posts = sources
     .flatMap(s => s.posts?.length ? [{ ...s.posts[0], fromPlaylist: s.playlist.title, fromPlaylistId: s.playlist.id }] : [])
     .filter(p => p?.date)
+    .sort((a, b) => new Date(b.date) - new Date(a.date))
   return cors(json(posts))
 }
 
@@ -739,7 +740,7 @@ const handleCurateDismissCandidate = async (req, db) => {
 
 // router
 
-export const handleDiscover = async (req, env) => {
+export const handleDiscover = async (req, env, ctx) => {
   const url = new URL(req.url)
   const path = url.pathname
   const method = req.method
@@ -868,8 +869,8 @@ if (method === 'POST' && path === '/api/discover/admin/build-link-graph') {
     return json({ ok: true, sources: freshData.size })
   }
   if (method === 'POST' && path === '/api/discover/admin/check') {
-    const result = await checkDiscoverFeeds(env)
-    return json({ ok: true, ...result })
+    ctx.waitUntil(checkDiscoverFeeds(env).catch(err => console.error('admin check failed:', err)))
+    return json({ ok: true, triggered: true })
   }
   if (method === 'POST' && path === '/api/discover/admin/normalize-urls') {
     const norm = u => u.replace(/\/+$/, '')

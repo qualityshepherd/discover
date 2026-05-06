@@ -8,7 +8,7 @@ export const makeId = (url) => {
   return Math.abs(h).toString(36)
 }
 
-// ── Feeds ────────────────────────────────────────────────────────────────────
+// Feeds
 
 const rowToFeed = (row, sources = []) => {
   if (!row) return null
@@ -114,7 +114,7 @@ export const removeFromIndex = async (db, id) => {
   ])
 }
 
-// ── Sources ──────────────────────────────────────────────────────────────────
+// Sources
 
 const rowToSourceData = (row) => {
   if (!row) return null
@@ -208,7 +208,7 @@ export const getSourceAllData = async (db, urls) => {
   return result
 }
 
-// ── Curators ─────────────────────────────────────────────────────────────────
+// Curators
 
 const rowToCurator = (row) => row
   ? {
@@ -248,7 +248,7 @@ export const listCurators = async (db) => {
 // No separate curator-index in D1
 export const addToCuratorIndex = async (_db, _pubkey) => {}
 
-// ── User feed ─────────────────────────────────────────────────────────────────
+// User feed
 
 export const getUserFeedSlug = async (db) => {
   const row = await db.prepare("SELECT value FROM settings WHERE key='user-feed:slug'").first()
@@ -278,7 +278,7 @@ export const setUserFeed = async (db, slug, data) => {
   `).bind(slug, JSON.stringify(data.ids || []), JSON.stringify(data.sources || []), JSON.stringify(data.customFeeds || [])).run()
 }
 
-// ── Pending / Blocked ─────────────────────────────────────────────────────────
+// Pending / Blocked
 
 export const getPending = async (db) => {
   const rows = await db.prepare('SELECT url, title, description, submitted_at FROM pending ORDER BY submitted_at').all()
@@ -316,7 +316,7 @@ export const isBlocked = async (db, sources) => {
   })
 }
 
-// ── Mentions ─────────────────────────────────────────────────────────────────
+// Mentions
 
 export const getMentions = async (db, domain) => {
   const rows = await db.prepare(
@@ -356,7 +356,7 @@ export const saveMentions = async (db, domain, mentions) => {
   await db.batch(stmts)
 }
 
-// ── Curate candidates / dismissed domains ────────────────────────────────────
+// Curate candidates / dismissed domains
 
 export const getCandidates = async (db) => {
   const rows = await db.prepare('SELECT * FROM curate_candidates ORDER BY score DESC').all()
@@ -389,7 +389,7 @@ export const addDismissedDomain = async (db, domain) => {
   await db.prepare('INSERT OR IGNORE INTO dismissed_domains (domain) VALUES (?)').bind(domain).run()
 }
 
-// ── Settings / cron state ────────────────────────────────────────────────────
+// Settings / cron state
 
 export const getCronState = async (db, key) => {
   const row = await db.prepare('SELECT value FROM settings WHERE key=?').bind(key).first()
@@ -402,7 +402,7 @@ export const setCronState = async (db, key, value) => {
   ).bind(key, value).run()
 }
 
-// ── Sessions / rate limits (used by auth.js) ─────────────────────────────────
+// Sessions / rate limits (used by auth.js)
 
 export const getSession = async (db, token) => {
   const row = await db.prepare('SELECT pubkey, expires_at FROM sessions WHERE token=?').bind(token).first()
@@ -662,7 +662,7 @@ export const getFeedsBySourceUrl = async (db, url) => {
   return feedRows.results.map(row => rowToFeed(row, byFeed[row.id] || []))
 }
 
-// ── Pure logic helpers (unchanged from discover-kv.js) ───────────────────────
+// Pure logic helpers (unchanged from discover-kv.js)
 
 export const isCuratorOf = (curator, playlistId) => !!(curator && curator.playlistId === playlistId)
 

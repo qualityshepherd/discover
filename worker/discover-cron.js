@@ -1,8 +1,8 @@
 import { parseFeed } from './feedParser.js'
 import {
   makeId, getFeeds, saveFeed, getSourceData, saveSourceData,
-  updateSourceMeta, updateMentionCounts,
-  getBlocked, getMentions, getMentionDomainsForSources, saveMentions,
+  updateSourceMeta,
+  getBlocked, getMentions, saveMentions,
   getDismissedDomains, getCandidates, saveCandidates,
   getCronState, setCronState, getAllSourceUrls, getStaleSourceMeta,
   listCurators, deleteCurator, isCuratorInactive
@@ -137,31 +137,17 @@ export const buildLinkGraph = async (db, sourceUrls, freshData) => {
     }
   }
 
-  // Also include domains that had mentions from fresh sources but no longer do —
-  // so we can clear their stale entries rather than leaving orphaned counts.
-  const freshSources = new Set([...freshData.keys()])
-  const staleDomains = await getMentionDomainsForSources(db, [...freshSources])
-  for (const domain of staleDomains) {
-    if (!byTarget.has(domain)) byTarget.set(domain, [])
-  }
-
   if (!byTarget.size) return
 
-  const mentionCountChanges = []
   await Promise.all([...byTarget.entries()].map(async ([domain, newItems]) => {
     const existing = await getMentions(db, domain)
     const newKeys = new Set(newItems.map(m => `${m.fromSource}:${m.fromPost}`))
-    // drop any existing mention whose source was just rescanned — newItems has the current truth
-    const kept = existing.filter(m => !newKeys.has(`${m.fromSource}:${m.fromPost}`) && !freshSources.has(m.fromSource))
+    const kept = existing.filter(m => !newKeys.has(`${m.fromSource}:${m.fromPost}`))
     const updated = [...kept, ...newItems]
       .sort((a, b) => new Date(b.foundAt) - new Date(a.foundAt))
       .slice(0, 100)
     await saveMentions(db, domain, updated)
-    const sourceUrl = domainToSource.get(domain)
-    if (sourceUrl) mentionCountChanges.push({ url: sourceUrl, count: updated.length })
   }))
-
-  if (mentionCountChanges.length) await updateMentionCounts(db, mentionCountChanges)
 }
 
 const SKIP_CURATE_DOMAINS = new Set([

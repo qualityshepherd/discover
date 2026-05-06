@@ -30,7 +30,7 @@ binding = "R2"
 bucket_name = ""  # wrangler r2 bucket create your-bucket-name
 
 [triggers]
-crons = ["0,42 * * * *"]
+crons = ["42 * * * *"]
 
 [observability]
 enabled = true

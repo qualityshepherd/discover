@@ -25,12 +25,26 @@ const parseSiteUrl = (xml) => {
 
 const stripProcessingInstructions = (xml) => xml.replace(/<\?(?!xml\s)[^?]*\?>/gi, '')
 
+const FETCH_HEADERS = { 'User-Agent': 'discover/1.0 (+https://discover.brine.dev; RSS reader)', Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*' }
+
+// Manual redirect following — each hop is a counted subrequest on CF free tier.
+// Cap at 2 hops (3 total fetches max) so BATCH_SIZE=15 stays under the 50 limit.
 export const fetchSource = async (url, limit = 3) => {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(10000), headers: { 'User-Agent': 'discover/1.0 (+https://discover.brine.dev; RSS reader)', Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*' } })
-    if (!res.ok) return { posts: null, config: { url }, statusCode: res.status }
-    const xml = stripProcessingInstructions(await res.text())
-    return { posts: parseFeed(xml, { url, title: '', limit }), config: { url, limit }, siteUrl: parseSiteUrl(xml), statusCode: res.status }
+    let currentUrl = url
+    for (let hop = 0; hop <= 2; hop++) {
+      const res = await fetch(currentUrl, { redirect: 'manual', signal: AbortSignal.timeout(10000), headers: FETCH_HEADERS })
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get('location')
+        if (!loc) return { posts: null, config: { url }, statusCode: res.status }
+        currentUrl = loc.startsWith('http') ? loc : new URL(loc, currentUrl).href
+        continue
+      }
+      if (!res.ok) return { posts: null, config: { url }, statusCode: res.status }
+      const xml = stripProcessingInstructions(await res.text())
+      return { posts: parseFeed(xml, { url, limit }), config: { url, limit }, siteUrl: parseSiteUrl(xml), statusCode: res.status }
+    }
+    return { posts: null, config: { url }, statusCode: 0, error: 'too many redirects' }
   } catch (err) {
     return { posts: null, config: { url }, statusCode: 0, error: err?.message || String(err) }
   }
@@ -63,12 +77,12 @@ export const findImage = (posts) => {
 // Used by admin add/edit — no existing-data fallback since source is new.
 export const fetchAndSaveSource = async (db, url) => {
   const now = Date.now()
-  const result = await fetchSource(url, 10)
+  const result = await fetchSource(url, 20)
   let posts = []; let siteUrl = null; let image = null; let frequency = null
   if (result.posts) {
     frequency = computeFrequency(result.posts)
     image = findImage(result.posts) || null
-    posts = result.posts.slice(0, 3).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
+    posts = result.posts.slice(0, 20).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
     siteUrl = result.siteUrl || null
   }
   const sourceData = { url, siteUrl, posts, image, frequency, title: posts[0]?.feed?.title || null, statusCode: result.statusCode ?? null, error: result.error || null, lastFetched: new Date(now).toISOString() }
@@ -250,12 +264,14 @@ export const pruneCurators = async (db) => {
   return { pruned: inactive.length }
 }
 
+const BATCH_SIZE = 24
+
 export const checkDiscoverFeeds = async (env) => {
   const db = env.DISCOVER_DB
   const allFeeds = await getFeeds(db)
   if (!allFeeds?.length) return { processed: 0, skipped: 0 }
 
-  const sourceMetas = await getStaleSourceMeta(db)
+  const sourceMetas = await getStaleSourceMeta(db, { limit: BATCH_SIZE })
   const due = sourceMetas.map(m => ({ url: m.url, image: m.image, latestPostUrl: m.latestPostUrl }))
 
   const freshData = new Map()
@@ -263,12 +279,12 @@ export const checkDiscoverFeeds = async (env) => {
 
   for (const entry of due) {
     const { url } = entry
-    const result = await fetchSource(url, 10)
+    const result = await fetchSource(url, 20)
 
     if (result.posts) {
       const frequency = computeFrequency(result.posts)
       const image = findImage(result.posts) || entry.image || null
-      const posts = result.posts.slice(0, 3).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
+      const posts = result.posts.slice(0, 20).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
       const latestPostUrl = posts[0]?.url || null
       const changed = latestPostUrl !== entry.latestPostUrl || image !== entry.image
 
@@ -308,10 +324,12 @@ export const checkDiscoverFeeds = async (env) => {
 
   const allSourceUrls = await getAllSourceUrls(db)
   await buildLinkGraph(db, allSourceUrls, freshData).catch(err => console.error('buildLinkGraph failed:', err))
-  await buildCurateCandidates(db, allSourceUrls, freshData).catch(err => console.error('buildCurateCandidates failed:', err))
   await pruneCurators(db).catch(err => console.error('pruneCurators failed:', err))
 
-  await setCronState(db, 'cron:lastOk', new Date().toISOString())
+  await Promise.all([
+    setCronState(db, 'cron:lastOk', new Date().toISOString()),
+    setCronState(db, 'cron:lastCount', String(due.length))
+  ])
 
   if (env.R2) {
     const today = new Date().toISOString().slice(0, 10)

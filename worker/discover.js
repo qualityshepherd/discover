@@ -13,7 +13,7 @@ import {
   getUserFeedSlug, setUserFeedSlug, getUserFeed, setUserFeed,
   getMentions, getCronState
 } from './discover-db.js'
-import { checkDiscoverFeeds, computeFrequency, fetchSource, findImage, buildLinkGraph } from './discover-cron.js'
+import { checkDiscoverFeeds, computeFrequency, fetchSource, findImage, buildLinkGraph, buildCurateCandidates } from './discover-cron.js'
 import {
   handleCuratorList, handleCuratorInvite, handleCuratorRevoke,
   handleValidate, handlePendingReject, handlePendingList, handleApprove,
@@ -195,18 +195,25 @@ const handleFeedOpml = async (db, req) => {
 // GET /api/discover/random
 const handleRandom = async (db) => {
   const sources = await getRandomSourcePosts(db)
-  const posts = sources
-    .map(s => s.posts[0] ? { ...s.posts[0], fromPlaylist: s.playlist.title, fromPlaylistId: s.playlist.id } : null)
-    .filter(Boolean)
-  return cors(json(posts))
+  const seen = new Set()
+  const all = sources
+    .flatMap(s => (s.posts || []).map(p => ({ ...p, fromPlaylist: s.playlist.title, fromPlaylistId: s.playlist.id })))
+    .filter(p => p?.url && !seen.has(p.url) && seen.add(p.url))
+  for (let i = all.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [all[i], all[j]] = [all[j], all[i]]
+  }
+  return cors(json(all.slice(0, 100)))
 }
 
 // GET /api/discover/new
 const handleNew = async (db) => {
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
   const sources = await getNewestSourcePosts(db)
+  const seen = new Set()
   const posts = sources
-    .flatMap(s => s.posts?.length ? [{ ...s.posts[0], fromPlaylist: s.playlist.title, fromPlaylistId: s.playlist.id }] : [])
-    .filter(p => p?.date)
+    .flatMap(s => (s.posts || []).map(p => ({ ...p, fromPlaylist: s.playlist.title, fromPlaylistId: s.playlist.id })))
+    .filter(p => p?.url && p?.date && p.date >= cutoff && !seen.has(p.url) && seen.add(p.url))
     .sort((a, b) => new Date(b.date) - new Date(a.date))
   return cors(json(posts))
 }
@@ -405,8 +412,11 @@ export const handleDiscover = async (req, env, ctx) => {
   if (method === 'DELETE' && path === '/api/discover/admin/curate/candidate') return handleCurateDismissCandidate(req, db)
 
   if (method === 'GET' && path === '/api/discover/admin/status') {
-    const lastCronOk = await getCronState(db, 'cron:lastOk')
-    return json({ lastCronOk })
+    const [lastCronOk, lastCronCount] = await Promise.all([
+      getCronState(db, 'cron:lastOk'),
+      getCronState(db, 'cron:lastCount')
+    ])
+    return json({ lastCronOk, lastCronCount: lastCronCount ? parseInt(lastCronCount) : null })
   }
 
   if (method === 'GET' && path === '/api/discover/admin/webping') return handleWebping(db)
@@ -431,6 +441,7 @@ export const handleDiscover = async (req, env, ctx) => {
     const sourceAll = await resolveSourceAll(db, sourceUrls)
     const freshData = new Map(sourceUrls.map(u => [u, sourceAll[makeId(u)]]).filter(([, d]) => d))
     await buildLinkGraph(db, sourceUrls, freshData)
+    await buildCurateCandidates(db, sourceUrls, freshData)
     return json({ ok: true, sources: freshData.size })
   }
   if (method === 'POST' && path === '/api/discover/admin/check') {

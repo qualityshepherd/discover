@@ -442,13 +442,15 @@ export const getAllSourceUrls = async (db) => {
 }
 
 // Fetch+frequency metadata for all sources in any feed — for cron stale check
-export const getStaleSourceMeta = async (db) => {
-  const rows = await db.prepare(`
+export const getStaleSourceMeta = async (db, { limit } = {}) => {
+  const sql = `
     SELECT fs.source_url AS url, s.last_fetched, s.frequency, s.latest_post_url, s.latest_post_date,
            s.image, s.added_at, s.status_code, s.error, s.has_posts, s.mention_count
     FROM (SELECT DISTINCT source_url FROM feed_sources) fs
     LEFT JOIN sources s ON s.url = fs.source_url
-  `).all()
+    ORDER BY s.last_fetched ASC${limit ? ' LIMIT ?' : ''}
+  `
+  const rows = await (limit ? db.prepare(sql).bind(limit) : db.prepare(sql)).all()
   return rows.results.map(r => ({
     url: r.url,
     lastFetched: r.last_fetched || null,
@@ -552,9 +554,15 @@ export const searchSources = async (db, { q, tag } = {}) => {
     LIMIT 50
   `).bind(...params).all()
 
-  return rows.results.flatMap(r => {
+  const byDomain = new Map()
+  for (const r of rows.results) {
+    let domain
+    try { domain = new URL(r.url).hostname.replace(/^www\./, '') } catch { domain = r.url }
+    if (!byDomain.has(domain)) byDomain.set(domain, { r, playlists: [] })
+    byDomain.get(domain).playlists.push(...JSON.parse(r.playlists || '[]'))
+  }
+  return [...byDomain.values()].flatMap(({ r, playlists }) => {
     const posts = JSON.parse(r.posts || '[]')
-    const playlists = JSON.parse(r.playlists || '[]')
     const post = posts[0]
     if (!post) return []
     return [{ ...post, fromPlaylist: playlists[0]?.title || r.title || r.url, fromPlaylistId: playlists[0]?.id || null, playlists }]
@@ -606,7 +614,7 @@ export const getNewestSourcePosts = async (db) => {
     }))
 }
 
-// 99 random sources with one post each, deduped by source URL
+// All sources with posts — caller shuffles the expanded post corpus
 export const getRandomSourcePosts = async (db) => {
   const rows = await db.prepare(`
     SELECT s.posts, f.title AS feed_title, f.id AS feed_id
@@ -614,8 +622,6 @@ export const getRandomSourcePosts = async (db) => {
     JOIN (SELECT source_url, MIN(feed_id) AS feed_id FROM feed_sources GROUP BY source_url) fs ON s.url = fs.source_url
     JOIN feeds f ON f.id = fs.feed_id
     WHERE s.has_posts = 1
-    ORDER BY RANDOM()
-    LIMIT 99
   `).all()
   return rows.results.map(r => ({
     posts: JSON.parse(r.posts || '[]'),

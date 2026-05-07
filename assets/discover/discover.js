@@ -377,6 +377,14 @@ document.getElementById('discover-cards').addEventListener('click', e => {
     return
   }
 
+  const sourceRssBtn = e.target.closest('.btn-source-rss')
+  if (sourceRssBtn) {
+    navigator.clipboard.writeText(sourceRssBtn.dataset.rssUrl).catch(() => {})
+    sourceRssBtn.textContent = 'copied!'
+    setTimeout(() => { sourceRssBtn.textContent = 'rss' }, 1500)
+    return
+  }
+
   const rssBtn = e.target.closest('.btn-rss-copy')
   if (rssBtn) {
     handleRssCopy(rssBtn, rssBtn.dataset.rssId)

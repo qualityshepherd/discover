@@ -89,12 +89,20 @@ export const injectSourceFollowButtons = (container) => {
   container.querySelectorAll('.feed-post').forEach(post => {
     const feedUrl = post.dataset.feedUrl
     if (!feedUrl) return
+    const meta = post.querySelector('.feed-meta')
+    if (!meta) return
     const followed = hasSourceFollow(feedUrl)
     const btn = document.createElement('button')
     btn.className = `btn btn-sm btn-source-follow${followed ? ' following' : ''}`
     btn.dataset.sourceUrl = feedUrl
     btn.textContent = followed ? 'following' : '+ follow'
-    post.querySelector('.feed-meta')?.appendChild(btn)
+    meta.appendChild(btn)
+    const rssBtn = document.createElement('button')
+    rssBtn.className = 'btn btn-sm btn-source-rss'
+    rssBtn.dataset.rssUrl = feedUrl
+    rssBtn.title = feedUrl
+    rssBtn.textContent = 'rss'
+    meta.appendChild(rssBtn)
   })
 }
 

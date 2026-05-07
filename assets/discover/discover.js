@@ -66,7 +66,9 @@ const filterAndRender = async () => {
     }
     renderTagCloud(allTags)
     if (!filtered.length) { cards.innerHTML = '<p class="muted">no results.</p>'; return }
-    cards.innerHTML = filtered.map(feedsItemTemplate).join('')
+    const seenUrls = new Set()
+    const deduped = filtered.filter(s => !seenUrls.has(s.url) && seenUrls.add(s.url))
+    cards.innerHTML = deduped.map(feedsItemTemplate).join('')
     injectSourceFollowButtons(cards)
     injectMentionsLinks(cards, mentionCounts)
     setFeedContext(filtered)

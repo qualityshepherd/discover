@@ -9,7 +9,8 @@ import {
   getPending, savePending,
   getBlocked, saveBlocked,
   getCurator, saveCurator, deleteCurator, listCurators, addToCuratorIndex,
-  getCandidates, saveCandidates, addDismissedDomain
+  getCandidates, saveCandidates, addDismissedDomain,
+  deletePostTags
 } from './discover-db.js'
 import { fetchAndSaveSource, applySourceDatas, fetchSource, VIDEO_DOMAINS } from './discover-cron.js'
 
@@ -135,7 +136,6 @@ export const handleAdd = async (req, db) => {
     title: title || new URL(sources[0]).hostname,
     description: body.description?.trim() || '',
     tags: Array.isArray(body.tags) ? body.tags.map(t => String(t).trim().toLowerCase()) : [],
-    author: { name: body.author?.name?.trim() || '', url: body.author?.url?.trim() || '', pubkey: '' },
     sources,
     imports: 0,
     featured: body.featured || false,
@@ -161,13 +161,6 @@ export const handleEdit = async (req, db, id) => {
   if (Array.isArray(body.tags)) feed.tags = body.tags.map(t => String(t).trim().toLowerCase())
   if (Array.isArray(body.sources)) feed.sources = body.sources
   if (body.featured !== undefined) feed.featured = !!body.featured
-  if (body.author !== undefined) {
-    feed.author = {
-      name: body.author.name?.trim() || '',
-      url: body.author.url?.trim() || '',
-      pubkey: feed.author?.pubkey || ''
-    }
-  }
 
   await saveFeed(db, feed)
   return json({ ok: true })
@@ -269,7 +262,8 @@ export const handlePlaylistSourceRemove = async (req, db, id) => {
 
   await Promise.all([
     saveFeed(db, feed),
-    stillReferenced ? Promise.resolve() : deleteSourceData(db, url)
+    stillReferenced ? Promise.resolve() : deleteSourceData(db, url),
+    stillReferenced ? Promise.resolve() : deletePostTags(db, url)
   ])
   return json({ ok: true })
 }
@@ -319,7 +313,8 @@ export const handleSourceDelete = async (req, db) => {
   const affected = await getFeedsBySourceUrl(db, url)
   await Promise.all([
     ...affected.map(f => { f.sources = f.sources.filter(s => s !== url); return saveFeed(db, f) }),
-    deleteSourceData(db, url)
+    deleteSourceData(db, url),
+    deletePostTags(db, url)
   ])
   return json({ ok: true, affected: affected.length })
 }

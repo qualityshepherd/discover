@@ -5,6 +5,7 @@ import {
   getBlocked, getMentions, saveMentions,
   getDismissedDomains, getCandidates, saveCandidates,
   getCronState, setCronState, getAllSourceUrls, getStaleSourceMeta,
+  savePostTags,
   listCurators, deleteCurator, isCuratorInactive
 } from './discover-db.js'
 
@@ -82,7 +83,7 @@ export const fetchAndSaveSource = async (db, url) => {
   if (result.posts) {
     frequency = computeFrequency(result.posts)
     image = findImage(result.posts) || null
-    posts = result.posts.slice(0, 20).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
+    posts = result.posts.slice(0, 20).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content, tags: p.tags }))
     siteUrl = result.siteUrl || null
   }
   const sourceData = { url, siteUrl, posts, image, frequency, title: posts[0]?.feed?.title || null, statusCode: result.statusCode ?? null, error: result.error || null, lastFetched: new Date(now).toISOString() }
@@ -284,16 +285,10 @@ export const checkDiscoverFeeds = async (env) => {
     if (result.posts) {
       const frequency = computeFrequency(result.posts)
       const image = findImage(result.posts) || entry.image || null
-      const posts = result.posts.slice(0, 20).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
-      const latestPostUrl = posts[0]?.url || null
-      const changed = latestPostUrl !== entry.latestPostUrl || image !== entry.image
-
+      const posts = result.posts.slice(0, 20).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content, tags: p.tags }))
       const data = { url, siteUrl: result.siteUrl || null, posts, image, frequency, title: posts[0]?.feed?.title || null, statusCode: result.statusCode, error: null, lastFetched: new Date(now).toISOString() }
-      if (changed) {
-        await saveSourceData(db, url, data)
-      } else {
-        await updateSourceMeta(db, url, { statusCode: result.statusCode, error: null, frequency, lastFetched: new Date(now).toISOString() })
-      }
+      await savePostTags(db, url, posts)
+      await saveSourceData(db, url, data)
       freshData.set(url, data)
     } else {
       // fetch failed — update metadata only, leave posts untouched

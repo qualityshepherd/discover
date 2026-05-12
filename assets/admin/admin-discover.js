@@ -40,8 +40,6 @@ const dcEntryEdit = (e) => {
       <div class="row field">
         <div class="field" style="flex:2"><input type="text" class="dc-edit-title" value="${escHtml(e.title)}" placeholder="title"></div>
         <div class="field" style="flex:2"><input type="text" class="dc-edit-tags" value="${escHtml((e.tags || []).join(', '))}" placeholder="tags, comma separated"></div>
-        <div class="field" style="flex:1"><input type="text" class="dc-edit-author-name" value="${escHtml(e.author?.name || '')}" placeholder="author name"></div>
-        <div class="field" style="flex:1"><input type="url" class="dc-edit-author-url" value="${escHtml(e.author?.url || '')}" placeholder="author url"></div>
       </div>
       <div class="field"><input type="text" class="dc-edit-description" value="${escHtml(e.description || '')}" placeholder="description"></div>
       <div class="dc-playlist-sources">${sourcesHtml}</div>
@@ -296,11 +294,7 @@ function bindDcEntryRows (el) {
           title: wrap.querySelector('.dc-edit-title').value.trim(),
           description: wrap.querySelector('.dc-edit-description').value.trim(),
           tags: wrap.querySelector('.dc-edit-tags').value.split(',').map(t => t.trim()).filter(Boolean),
-          featured: wrap.querySelector('.dc-edit-featured').checked,
-          author: {
-            name: wrap.querySelector('.dc-edit-author-name').value.trim(),
-            url: wrap.querySelector('.dc-edit-author-url').value.trim()
-          }
+          featured: wrap.querySelector('.dc-edit-featured').checked
         }
         const res = await api('PATCH', `/api/discover/admin/${id}`, body)
         if (res.error) { alert(res.error); return }
@@ -463,16 +457,13 @@ $('btn-dc-add').addEventListener('click', async () => {
     description: $('dc-description').value.trim(),
     tags: $('dc-tags').value.split(',').map(t => t.trim()).filter(Boolean),
     featured: $('dc-featured').checked,
-    sources: [],
-    author: { name: $('dc-author-name').value.trim(), url: $('dc-author-url').value.trim() }
+    sources: []
   }
   const res = await api('POST', '/api/discover/admin/add', body)
   if (res.error) { showError('dc-error', res.error); return }
   $('dc-title').value = ''
   $('dc-description').value = ''
   $('dc-tags').value = ''
-  $('dc-author-name').value = ''
-  $('dc-author-url').value = ''
   $('dc-featured').checked = false
   await renderDcEntries()
 })

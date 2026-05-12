@@ -91,12 +91,14 @@ export const injectSourceFollowButtons = (container) => {
     if (!feedUrl) return
     const meta = post.querySelector('.feed-meta')
     if (!meta) return
-    const followed = hasSourceFollow(feedUrl)
-    const btn = document.createElement('button')
-    btn.className = `btn btn-sm btn-source-follow${followed ? ' following' : ''}`
-    btn.dataset.sourceUrl = feedUrl
-    btn.textContent = followed ? 'following' : '+ follow'
-    meta.appendChild(btn)
+    if (!hasCustomFeed(feedUrl) && !post.dataset.customFeed) {
+      const followed = hasSourceFollow(feedUrl)
+      const btn = document.createElement('button')
+      btn.className = `btn btn-sm btn-source-follow${followed ? ' following' : ''}`
+      btn.dataset.sourceUrl = feedUrl
+      btn.textContent = followed ? 'following' : '+ follow'
+      meta.appendChild(btn)
+    }
     const rssBtn = document.createElement('button')
     rssBtn.className = 'btn btn-sm btn-source-rss'
     rssBtn.dataset.rssUrl = feedUrl
@@ -114,7 +116,9 @@ export const getCustomFeeds = () => {
   try { return JSON.parse(localStorage.getItem(CUSTOM_KEY) || '[]') } catch { return [] }
 }
 
-const saveCustomFeeds = (feeds) => localStorage.setItem(CUSTOM_KEY, JSON.stringify(feeds))
+const saveCustomFeeds = (feeds) => {
+  try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(feeds)) } catch { console.warn('localStorage quota exceeded for custom feeds') }
+}
 
 export const hasCustomFeed = (url) => getCustomFeeds().some(f => f.url === url)
 

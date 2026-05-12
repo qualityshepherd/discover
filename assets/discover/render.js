@@ -39,7 +39,6 @@ export const renderCard = (entry) => {
       <div class="discover-card-meta">
         ${sourceCount ? `<span class="discover-type">${sourceCount} feeds</span>` : ''}
         ${freq ? `<span class="discover-freq">${freq}</span>` : ''}
-        ${entry.author?.name ? `<span class="discover-author">${entry.author.url ? `<a href="${entry.author.url}" target="_blank" rel="noopener noreferrer">${entry.author.name}</a>` : entry.author.name}</span>` : ''}
       </div>
       ${(entry.tags || []).length ? `<div class="discover-tags">${(entry.tags || []).map(t => renderTag(t)).join('')}</div>` : ''}
       <div class="discover-card-actions">

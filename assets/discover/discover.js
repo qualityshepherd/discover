@@ -23,6 +23,12 @@ const renderTagCloud = (tags) => {
   tagCloud.innerHTML = visible.map(({ tag }) => renderTag(tag, activeTags.has(tag))).join('') + moreBtn
 }
 
+let postTags = []
+const ensurePostTags = async () => {
+  if (postTags.length) return
+  postTags = await fetch('/api/discover/tags').then(r => r.json()).catch(() => [])
+}
+
 const shuffle = (arr) => {
   const a = [...arr]
   for (let i = a.length - 1; i > 0; i--) {
@@ -100,13 +106,13 @@ const loadBrowse = async () => {
   if (tagParam) tagParam.split(',').filter(Boolean).forEach(t => activeTags.add(t))
   if (qParam) document.getElementById('discover-search').value = qParam
 
-  const res = await fetch('/api/discover')
+  const [res] = await Promise.all([fetch('/api/discover'), ensurePostTags()])
   const data = await res.json()
   allEntries = data.feeds || []
   allTags = data.tags || []
   mentionCounts = data.mentionCounts || {}
 
-  renderBrowse(allEntries, data.tags || [])
+  renderBrowse(allEntries, postTags.length ? postTags : data.tags || [])
   if (activeTags.size || qParam) await filterAndRender()
 }
 
@@ -193,10 +199,7 @@ const loadPlaylist = async (id) => {
     playlistEntry = entry
     document.getElementById('playlist-title').textContent = entry.title
     document.getElementById('playlist-description').textContent = entry.description || ''
-    document.getElementById('playlist-tags').innerHTML = [
-      ...(entry.tags || []).map(t => renderTag(t)),
-      entry.author?.name ? `<span class="discover-author">${entry.author.url ? `<a href="${entry.author.url}" target="_blank" rel="noopener noreferrer">${entry.author.name}</a>` : entry.author.name}</span>` : ''
-    ].join('')
+    document.getElementById('playlist-tags').innerHTML = (entry.tags || []).map(t => renderTag(t)).join('')
     const rssBtn = document.getElementById('btn-rss-playlist')
     rssBtn.href = `/api/discover/${id}/rss`
     const followBtn = document.getElementById('btn-follow-playlist')
@@ -290,11 +293,29 @@ const loadRandom = async () => {
   initModal()
 }
 
+const loadTag = async (tag) => {
+  fetch(`/api/hit?path=/tag/${encodeURIComponent(tag)}`, { method: 'POST' }).catch(() => {})
+  showView('browse')
+  const cards = document.getElementById('discover-cards')
+  cards.innerHTML = '<p class="muted">loading…</p>'
+  document.getElementById('tag-cloud').innerHTML = ''
+  await ensureMentionCounts()
+  const posts = await fetch(`/api/discover/tag/${encodeURIComponent(tag)}`).then(r => r.json()).catch(() => [])
+  if (!posts.length) { cards.innerHTML = `<p class="muted">no posts tagged #${tag} yet.</p>`; return }
+  setFeedContext(posts)
+  initModal()
+  cards.innerHTML = posts.map(feedsItemTemplate).join('')
+  injectSourceFollowButtons(cards)
+  injectMentionsLinks(cards, mentionCounts)
+}
+
 const route = () => {
   const path = location.pathname
   const parts = path.split('/').filter(Boolean)
   if (parts.length === 2 && parts[0] === 'discover') {
     loadPlaylist(parts[1])
+  } else if (parts.length === 2 && parts[0] === 'tag') {
+    loadTag(decodeURIComponent(parts[1]))
   } else if (path === '/new') {
     loadNew()
   } else if (path === '/random') {
@@ -329,13 +350,12 @@ document.getElementById('tag-cloud').addEventListener('click', e => {
   if (!btn) return
   if (btn.classList.contains('discover-tag-more')) {
     tagCloudExpanded = !tagCloudExpanded
-    renderTagCloud(allTags)
+    renderTagCloud(postTags.length ? postTags : allTags)
     return
   }
   const tag = btn.dataset.tag
-  if (activeTags.has(tag)) activeTags.delete(tag)
-  else activeTags.add(tag)
-  filterAndRender()
+  history.pushState({}, '', `/tag/${encodeURIComponent(tag)}`)
+  loadTag(tag)
 })
 
 document.getElementById('discover-cards').addEventListener('click', e => {

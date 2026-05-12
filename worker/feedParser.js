@@ -33,6 +33,41 @@ export const extractAttr = (xml, tag, attr) => {
   return match ? match[1] : ''
 }
 
+// Extract all <category> values (RSS text content or Atom term= attr)
+export const extractCategories = (xml) => {
+  const cats = []
+  for (const [, term] of xml.matchAll(/<category[^>]+term=["']([^"']+)["'][^>]*\/?>/gi)) cats.push(term)
+  for (const m of xml.matchAll(/<category[^>]*>([^<]+)<\/category>/gi)) {
+    if (!m[0].includes('term=')) cats.push(m[1].trim())
+  }
+  return cats
+}
+
+const HEX_COLOR = /^[0-9a-f]{3,8}$/i
+const HEX_ENTITY = /^x[0-9a-f]+$/i // &#x2019; &#xa0; etc
+const FOOTNOTE = /^fn(?:ref)?\d*$/i // fn1 fn2 fnref1 fnref2
+
+// require # not preceded by & ( " ' = to avoid entities + markdown/html anchors
+const CONTENT_TAG_RE = /(?<![&("'=])#([a-zA-Z][a-zA-Z0-9_-]*)/g
+
+export const normalizeTag = (raw) => raw.toLowerCase().replace(/[^a-z0-9]/g, '')
+
+export const extractPostTags = (categoryXml, content) => {
+  const tags = new Set()
+  for (const c of extractCategories(categoryXml)) {
+    const n = normalizeTag(c.trim())
+    if (n.length >= 2 && !HEX_COLOR.test(n) && !HEX_ENTITY.test(n) && !FOOTNOTE.test(n)) tags.add(n)
+  }
+  if (content) {
+    const text = content.replace(/<[^>]*>/g, ' ')
+    for (const [, t] of text.matchAll(CONTENT_TAG_RE)) {
+      const n = normalizeTag(t)
+      if (n.length >= 2 && !HEX_COLOR.test(n) && !HEX_ENTITY.test(n) && !FOOTNOTE.test(n)) tags.add(n)
+    }
+  }
+  return [...tags].slice(0, 5)
+}
+
 export const isAtom = (xml) =>
   xml.includes('xmlns="http://www.w3.org/2005/Atom"') ||
   xml.trimStart().startsWith('<feed')
@@ -80,6 +115,7 @@ const parseRssItem = (itemXml, feedMeta, isPodcast = false) => {
     date: extractTag(itemXml, 'pubDate') || extractTag(itemXml, 'dc:date') || '',
     content: content + imgTag + audioTag,
     author: extractCdata(extractTag(itemXml, 'dc:creator') || extractTag(itemXml, 'author')),
+    tags: extractPostTags(itemXml, content),
     feed: feedMeta
   }
 }
@@ -106,6 +142,7 @@ const parseAtomEntry = (entryXml, feedMeta) => {
     date: extractTag(entryXml, 'published') || extractTag(entryXml, 'updated') || '',
     content: thumbnail + content,
     author: extractCdata(extractTag(extractTag(entryXml, 'author'), 'name')),
+    tags: extractPostTags(entryXml, content),
     feed: feedMeta
   }
 }

@@ -11,7 +11,7 @@ import {
   getCurator, saveCurator,
   getPending, savePending, getBlocked,
   getUserFeedSlug, setUserFeedSlug, getUserFeed, setUserFeed,
-  getMentions, getCronState
+  getMentions, getCronState, getTagCloud, getPostsByTag
 } from './discover-db.js'
 import { checkDiscoverFeeds, computeFrequency, fetchSource, findImage, buildLinkGraph, buildCurateCandidates } from './discover-cron.js'
 import {
@@ -248,12 +248,12 @@ const handlePreview = async (req, db) => {
     return cors(json({ title: feed.title, image, posts, siteUrl: null }))
   }
 
-  const result = await fetchSource(url, 10)
+  const result = await fetchSource(url, 20)
   if (!result.posts) return cors(json({ error: result.statusCode ? `HTTP ${result.statusCode}` : (result.error || 'could not fetch feed') }, 422))
   if (!result.posts.length) return cors(json({ error: 'no posts found' }, 422))
   const title = result.posts[0]?.feed?.title || new URL(url).hostname
   const image = findImage(result.posts)
-  const posts = result.posts.slice(0, 2).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
+  const posts = result.posts.slice(0, 20).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
   return cors(json({ title, image, posts, siteUrl: result.siteUrl || null }))
 }
 
@@ -324,6 +324,16 @@ export const handleDiscover = async (req, env, ctx) => {
   if (method === 'GET' && path === '/api/discover/all/opml') return handleAllOpml(db)
   if (method === 'GET' && path === '/api/discover/random') return handleRandom(db)
   if (method === 'GET' && path === '/api/discover/new') return handleNew(db)
+  if (method === 'GET' && path === '/api/discover/tags') {
+    return cors(new Response(JSON.stringify(await getTagCloud(db)), {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=300' }
+    }))
+  }
+  const tagMatch = path.match(/^\/api\/discover\/tag\/([^/]+)$/)
+  if (tagMatch && method === 'GET') {
+    const tag = decodeURIComponent(tagMatch[1]).toLowerCase()
+    return cors(json(await getPostsByTag(db, tag)))
+  }
   if (method === 'POST' && path === '/api/discover/preview') return handlePreview(req, db)
   if (method === 'POST' && path === '/api/discover/submit') return handleSubmit(req, db)
   if (method === 'GET' && path === '/api/discover/search') {
@@ -474,9 +484,13 @@ export const handleDiscover = async (req, env, ctx) => {
 
   // Backup download
   if (method === 'GET' && path === '/api/discover/admin/backup') {
-    const [feeds, blocked] = await Promise.all([getFeeds(db), getBlocked(db)])
+    const [feeds, blocked, sourcesResult] = await Promise.all([
+      getFeeds(db),
+      getBlocked(db),
+      db.prepare('SELECT * FROM sources').all()
+    ])
     const date = new Date().toISOString().slice(0, 10)
-    return new Response(JSON.stringify({ date, feeds: feeds || [], blocked: blocked || [] }, null, 2), {
+    return new Response(JSON.stringify({ date, feeds: feeds || [], blocked: blocked || [], sources: sourcesResult.results || [] }, null, 2), {
       headers: {
         'Content-Type': 'application/json',
         'Content-Disposition': `attachment; filename="discover-backup-${date}.json"`

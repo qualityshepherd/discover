@@ -1,7 +1,7 @@
 export const injectMentionsLinks = (container, mentionCounts = {}) => {
   container.querySelectorAll('.feed-post[data-feed-url]').forEach(post => {
     const feedUrl = post.dataset.feedUrl
-    if (!feedUrl) return
+    if (!feedUrl || post.dataset.customFeed) return
     const meta = post.querySelector('.feed-meta')
     if (!meta || meta.querySelector('.btn-mentions')) return
     let sourceId

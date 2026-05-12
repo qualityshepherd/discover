@@ -19,7 +19,6 @@ const rowToFeed = (row, sources = []) => {
     type: row.type || undefined,
     tags: JSON.parse(row.tags || '[]'),
     coverImage: row.cover_image || undefined,
-    author: row.author ? JSON.parse(row.author) : undefined,
     ownerPubkey: row.owner_pubkey || undefined,
     featured: !!row.featured,
     imports: row.imports || 0,
@@ -58,20 +57,20 @@ export const getFeeds = async (db) => {
 
 export const saveFeed = async (db, feed) => {
   const {
-    id, title, description, type, tags, coverImage, author, ownerPubkey, featured, imports,
+    id, title, description, type, tags, coverImage, ownerPubkey, featured, imports,
     active, updateFrequency, lastChecked, lastUpdated, previewPosts, failStreak,
     curatorPubkey, curatorName, curatorUrl, addedAt, sources = []
   } = feed
 
   await db.prepare(`
     INSERT INTO feeds
-      (id, title, description, type, tags, cover_image, author, owner_pubkey, featured, imports,
+      (id, title, description, type, tags, cover_image, owner_pubkey, featured, imports,
        active, update_frequency, last_checked, last_updated, preview_posts, fail_streak,
        curator_pubkey, curator_name, curator_url, added_at, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
       title=excluded.title, description=excluded.description, type=excluded.type,
-      tags=excluded.tags, cover_image=excluded.cover_image, author=excluded.author,
+      tags=excluded.tags, cover_image=excluded.cover_image,
       owner_pubkey=excluded.owner_pubkey, featured=excluded.featured, imports=excluded.imports,
       active=excluded.active, update_frequency=excluded.update_frequency,
       last_checked=excluded.last_checked, last_updated=excluded.last_updated,
@@ -82,7 +81,6 @@ export const saveFeed = async (db, feed) => {
     id, title, description || null, type || null,
     JSON.stringify(tags || []),
     coverImage || null,
-    author ? JSON.stringify(author) : null,
     ownerPubkey || null,
     featured ? 1 : 0, imports || 0, active !== false ? 1 : 0,
     updateFrequency || null, lastChecked || null, lastUpdated || null,
@@ -96,7 +94,7 @@ export const saveFeed = async (db, feed) => {
     db.prepare('DELETE FROM feed_sources WHERE feed_id = ?').bind(id),
     db.prepare('DELETE FROM feeds_fts WHERE feed_id = ?').bind(id),
     db.prepare('INSERT INTO feeds_fts (feed_id, title, description, tags, author) VALUES (?,?,?,?,?)').bind(
-      id, title || '', description || '', JSON.stringify(tags || []), author ? JSON.stringify(author) : ''
+      id, title || '', description || '', JSON.stringify(tags || []), ''
     )
   ]
   for (const url of sources) {
@@ -627,6 +625,63 @@ export const getRandomSourcePosts = async (db) => {
     posts: JSON.parse(r.posts || '[]'),
     playlist: { title: r.feed_title, id: r.feed_id }
   }))
+}
+
+// Post tags
+
+export const savePostTags = async (db, sourceUrl, posts) => {
+  const stmts = [db.prepare('DELETE FROM post_tags WHERE source_url = ?').bind(sourceUrl)]
+  for (const post of posts) {
+    if (!post.url || !post.tags?.length) continue
+    for (const tag of post.tags) {
+      stmts.push(db.prepare(
+        'INSERT OR IGNORE INTO post_tags (source_url, post_url, tag, post_date) VALUES (?,?,?,?)'
+      ).bind(sourceUrl, post.url, tag, post.date || null))
+    }
+  }
+  await db.batch(stmts)
+}
+
+export const deletePostTags = async (db, sourceUrl) => {
+  await db.prepare('DELETE FROM post_tags WHERE source_url = ?').bind(sourceUrl).run()
+}
+
+// Tags with 2+ distinct sources — for the tag cloud
+export const getTagCloud = async (db) => {
+  const rows = await db.prepare(`
+    SELECT tag, COUNT(DISTINCT pt.source_url) AS source_count, COUNT(*) AS post_count
+    FROM post_tags pt
+    JOIN feed_sources fs ON fs.source_url = pt.source_url
+    GROUP BY tag
+    HAVING COUNT(DISTINCT pt.source_url) >= 2
+    ORDER BY post_count DESC, source_count DESC
+    LIMIT 200
+  `).all()
+  return rows.results.map(r => ({ tag: r.tag, count: r.source_count }))
+}
+
+// Posts for a given tag, reverse-chron, with playlist info
+export const getPostsByTag = async (db, tag) => {
+  const rows = await db.prepare(`
+    SELECT pt.source_url, pt.post_url, pt.post_date,
+           s.posts, f.title AS feed_title, f.id AS playlist_id
+    FROM post_tags pt
+    JOIN sources s ON s.url = pt.source_url
+    JOIN feed_sources fs ON fs.source_url = pt.source_url
+    JOIN feeds f ON f.id = fs.feed_id
+    WHERE pt.tag = ?
+    ORDER BY pt.post_date DESC
+    LIMIT 200
+  `).bind(tag).all()
+
+  const seen = new Set()
+  return rows.results.flatMap(r => {
+    const posts = JSON.parse(r.posts || '[]')
+    const post = posts.find(p => p.url === r.post_url)
+    if (!post || seen.has(r.post_url)) return []
+    seen.add(r.post_url)
+    return [{ ...post, fromPlaylist: r.feed_title, fromPlaylistId: r.playlist_id }]
+  })
 }
 
 // Whether a URL exists in any feed's sources

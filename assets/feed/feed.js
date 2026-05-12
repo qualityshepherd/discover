@@ -1,4 +1,5 @@
 import { feedsItemTemplate } from '../src/templates.js'
+import { stripHtml } from '../src/feedRules.js'
 import { openModal, initModal, resetModal, setFeedContext, getFeedItem } from '../discover/modal.js'
 import { getFollows, getSourceFollows, hasSourceFollow, toggleSourceFollow, syncSourceFollowButtons, injectSourceFollowButtons, getCustomFeeds, addCustomFeed, hasCustomFeed, clearFollows, clearSourceFollows, clearCustomFeeds, clearFollowedPlaylists } from '../discover/follows.js'
 import { injectMentionsLinks } from '../discover/mentions.js'
@@ -45,6 +46,7 @@ const renderPosts = () => {
     if (!batch.length) return
     const frag = document.createElement('div')
     frag.innerHTML = batch.map(p => feedsItemTemplate({ ...p, fromPlaylist: null, fromPlaylistId: null })).join('')
+    frag.querySelectorAll('.feed-post').forEach((el, i) => { if (batch[i]?._customFeed) el.dataset.customFeed = '1' })
     injectSourceFollowButtons(frag)
     injectMentionsLinks(frag, {})
     container.insertBefore(frag, sentinel)
@@ -92,7 +94,7 @@ const load = async () => {
 
   const customPosts = customFeeds
     .filter(f => f.posts?.length)
-    .flatMap(f => f.posts.map(p => ({ ...p, fromSource: f.url, fromPlaylist: f.title })))
+    .flatMap(f => f.posts.map(p => ({ ...p, fromSource: f.url, fromPlaylist: f.title, _customFeed: true })))
 
   allPosts = [...apiPosts, ...customPosts].sort((a, b) => new Date(b.date) - new Date(a.date))
   writeCache(allPosts)
@@ -100,6 +102,13 @@ const load = async () => {
 }
 
 document.getElementById('feed-posts').addEventListener('click', e => {
+  const sourceRssBtn = e.target.closest('.btn-source-rss')
+  if (sourceRssBtn) {
+    navigator.clipboard.writeText(sourceRssBtn.dataset.rssUrl).catch(() => {})
+    sourceRssBtn.textContent = 'copied!'
+    setTimeout(() => { sourceRssBtn.textContent = 'rss' }, 2000)
+    return
+  }
   const sourceFollowBtn = e.target.closest('.btn-source-follow')
   if (sourceFollowBtn) {
     toggleSourceFollow(sourceFollowBtn.dataset.sourceUrl)
@@ -141,11 +150,29 @@ opmlInput.addEventListener('change', async () => {
   const text = await file.text()
   const doc = new DOMParser().parseFromString(text, 'text/xml')
   const urls = [...doc.querySelectorAll('outline[xmlUrl]')].map(el => el.getAttribute('xmlUrl')).filter(Boolean)
-  let added = 0
-  for (const url of urls) {
-    if (!hasSourceFollow(url)) { toggleSourceFollow(url); added++ }
-  }
-  if (added) { clearCache(); load() }
+  if (!urls.length) return
+  addStatus.textContent = `importing ${urls.length} feeds…`
+  addStatus.className = 'feed-add-status'
+  const results = await Promise.allSettled(urls.map(async url => {
+    if (hasCustomFeed(url)) return
+    if (hasSourceFollow(url)) toggleSourceFollow(url) // move from sourceFollow to customFeed
+    const res = await fetch('/api/discover/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) })
+    if (!res.ok) return
+    const data = await res.json()
+    const posts = (data.posts || []).map(p => {
+      const imgMatch = (p.content || '').match(/<img[^>]+src=["'](https?:\/\/[^"']+)["'][^>]*>/i)
+      const img = imgMatch ? imgMatch[0] : ''
+      const text = stripHtml(p.content || '').slice(0, 500)
+      return { ...p, content: img + text }
+    })
+    addCustomFeed({ url, title: data.title, image: data.image, posts, siteUrl: data.siteUrl })
+  }))
+  const added = results.filter(r => r.status === 'fulfilled').length
+  addStatus.textContent = `imported ${added} feeds`
+  addStatus.className = 'feed-add-status ok'
+  setTimeout(() => { addStatus.textContent = ''; addStatus.className = 'feed-add-status' }, 4000)
+  clearCache()
+  load()
 })
 
 document.getElementById('btn-clear-feed').addEventListener('click', () => {
@@ -186,7 +213,13 @@ const addFeedByUrl = async () => {
       addStatus.className = 'feed-add-status error'
       return
     }
-    addCustomFeed({ url, title: data.title, image: data.image, posts: data.posts, siteUrl: data.siteUrl })
+    const posts = (data.posts || []).map(p => {
+      const imgMatch = (p.content || '').match(/<img[^>]+src=["'](https?:\/\/[^"']+)["'][^>]*>/i)
+      const img = imgMatch ? imgMatch[0] : ''
+      const text = stripHtml(p.content || '').slice(0, 500)
+      return { ...p, content: img + text }
+    })
+    addCustomFeed({ url, title: data.title, image: data.image, posts, siteUrl: data.siteUrl })
     addUrlInput.value = ''
     addStatus.textContent = `added: ${data.title}`
     addStatus.className = 'feed-add-status ok'

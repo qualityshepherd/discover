@@ -6,7 +6,7 @@ const BOT_PREFIXES = [
   '/account/', '/api/v1', '/back/', '/bak/', '/billing/', '/cgi-bin/', '/checkout',
   '/conf.d/', '/donate', '/error/', '/etc/', '/file-upload', '/fileupload',
   '/files/', '/form/', '/import/', '/info', '/log/', '/login',
-  '/mcp', '/old/', '/opt/', '/order/', '/php-cgi', '/phpinfo', '/plans/',
+  '/mcp', '/officialsite', '/old/', '/opt/', '/order/', '/php-cgi', '/phpinfo', '/plans/',
   '/proc/', '/register', '/rest/', '/restore/', '/root/', '/shop/', '/sse',
   '/storage/', '/subscribe', '/temp', '/test', '/tmp', '/upload',
   '/v1/', '/v2/', '/v3/', '/var/', '/vendor', '/wallet/', '/webhook/', '/wp-'

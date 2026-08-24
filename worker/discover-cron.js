@@ -1,6 +1,6 @@
 import { parseFeed } from './feedParser.js'
 import {
-  makeId, getFeeds, saveFeed, getSourceData, saveSourceData,
+  makeId, getFeeds, saveFeed, getSourceData, getSourceDataBulk, saveSourceData,
   updateSourceMeta,
   getBlocked, getMentions, saveMentions,
   getDismissedDomains, getCandidates, saveCandidates,
@@ -305,11 +305,16 @@ export const checkDiscoverFeeds = async (env) => {
     (f.sources || []).some(s => updatedUrls.has(s))
   )
 
+  // Bulk-fetch all source URLs needed for feed recomputation that aren't already in freshData
+  const missingUrls = [...new Set(
+    needsUpdate.flatMap(f => (f.sources || []).filter(u => !freshData.has(u)))
+  )]
+  const bulkFetched = await getSourceDataBulk(db, missingUrls)
+  const getSource = (url) => freshData.has(url) ? freshData.get(url) : bulkFetched.get(url) || null
+
   const changedFeeds = []
   for (const feed of needsUpdate) {
-    const sourceDatas = await Promise.all(
-      (feed.sources || []).map(url => freshData.has(url) ? freshData.get(url) : getSourceData(db, url))
-    )
+    const sourceDatas = (feed.sources || []).map(getSource)
     if (!sourceDatas.filter(Boolean).length) continue
     applySourceDatas(feed, sourceDatas, { keepOnEmpty: true })
     feed.lastUpdated = new Date(now).toISOString()

@@ -5,12 +5,14 @@
   align-items: center;
   gap: var(--space-2);
   margin: var(--space-5) 0 var(--space-4);
+  flex-wrap: wrap; /* Allows search bar to drop down if horizontal space is exhausted */
 }
 
 .discover-title {
   margin: 0;
   text-align: left;
   font-size: var(--text-xl);
+  flex-shrink: 0; /* Prevents flexbox from squeezing "discover" into "discove" */
 }
 
 #discover-search {

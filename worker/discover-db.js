@@ -132,6 +132,19 @@ export const getSourceData = async (db, url) => {
   return rowToSourceData(row)
 }
 
+export const getSourceDataBulk = async (db, urls) => {
+  if (!urls.length) return new Map()
+  const map = new Map()
+  for (let i = 0; i < urls.length; i += 99) {
+    const chunk = urls.slice(i, i + 99)
+    const { results } = await db.prepare(
+      `SELECT * FROM sources WHERE url IN (${chunk.map(() => '?').join(',')})`
+    ).bind(...chunk).all()
+    for (const row of results) map.set(row.url, rowToSourceData(row))
+  }
+  return map
+}
+
 export const saveSourceData = async (db, url, data) => {
   const posts = data.posts || []
   const latestPost = posts[0]

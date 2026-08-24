@@ -12,7 +12,9 @@
     ]
   },
   "scripts": {
-    "test": "node --test --test-reporter spec test/unit/*.test.js",
+    "deploy": "wrangler deploy",
+    "db:migrate:remote": "wrangler d1 migrations apply bmail --remote",
+    "test": "node --test --test-reporter spec test/unit/*.test.js && npx standard .",
     "test:unit": "node --test --test-reporter spec test/unit/*.test.js",
     "test:e2e": "start-server-and-test \"npx wrangler dev --env dev\" http://localhost:8787 \"node --test --test-concurrency=4 --test-reporter spec test/e2e/*.test.js\"",
     "test:debug": "HEADLESS=0 SLOWMO=100 start-server-and-test \"npx wrangler dev --env dev\" http://localhost:8787 \"node --test --test-reporter spec test/e2e/*.test.js\"",
@@ -20,8 +22,8 @@
     "pretty": "npx standard --fix"
   },
   "devDependencies": {
-    "puppeteer": "^24.3.1",
-    "start-server-and-test": "^2.0.12"
-  },
-  "dependencies": {}
+    "puppeteer": "^25.8.0",
+    "start-server-and-test": "^2.0.12",
+    "wrangler": "^4.123.0"
+  }
 }

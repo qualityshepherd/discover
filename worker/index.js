@@ -1,10 +1,8 @@
-import { trackHit, handleAnalytics, AnalyticsDO } from './analytics.js'
+import { trackHit } from './hit.js'
 import { handleDiscover, handleMentionsFeed, checkDiscoverFeeds, handleUserFeed, handlePersonalRss } from './discover.js'
-import { handleAuth, memberByToken, isOwnerPubkey } from './auth.js'
+import { handleAuth, memberByToken } from './auth.js'
 import { getFeed } from './discover-db.js'
 import { json } from './utils.js'
-
-export { AnalyticsDO }
 
 const escHtml = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
@@ -60,14 +58,6 @@ export default {
       const token = req.headers.get('authorization')?.replace('Bearer ', '')
       const pubkey = token ? await memberByToken(token, env.DISCOVER_DB) : null
       if (!pubkey) return json({ error: 'unauthorized' }, 401)
-    }
-
-    // Analytics (owner-only)
-    if (path === '/api/analytics') {
-      const token = req.headers.get('authorization')?.replace('Bearer ', '')
-      const pubkey = token ? await memberByToken(token, env.DISCOVER_DB) : null
-      if (!isOwnerPubkey(pubkey, env)) return json({ error: 'unauthorized' }, 401)
-      return handleAnalytics(req, env, url.hostname)
     }
 
     // Auth routes

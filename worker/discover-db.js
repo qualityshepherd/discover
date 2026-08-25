@@ -104,7 +104,6 @@ export const saveFeed = async (db, feed) => {
 }
 
 // No separate index table in D1 — feeds table IS the index
-export const addToIndex = async (_db, _id) => {}
 export const removeFromIndex = async (db, id) => {
   await db.batch([
     db.prepare('DELETE FROM feeds WHERE id = ?').bind(id),
@@ -255,9 +254,6 @@ export const listCurators = async (db) => {
   const rows = await db.prepare('SELECT * FROM curators').all()
   return rows.results.map(rowToCurator)
 }
-
-// No separate curator-index in D1
-export const addToCuratorIndex = async (_db, _pubkey) => {}
 
 // User feed
 

@@ -13,7 +13,8 @@
   },
   "scripts": {
     "deploy": "wrangler deploy",
-    "db:migrate:remote": "wrangler d1 migrations apply bmail --remote",
+    "db:migrate:remote": "wrangler d1 migrations apply discover-brine-dev --remote",
+    "chalk": "wrangler secret put CHALK_HIT_SECRET",
     "test": "node --test --test-reporter spec test/unit/*.test.js && npx standard .",
     "test:unit": "node --test --test-reporter spec test/unit/*.test.js",
     "test:e2e": "start-server-and-test \"npx wrangler dev --env dev\" http://localhost:8787 \"node --test --test-concurrency=4 --test-reporter spec test/e2e/*.test.js\"",

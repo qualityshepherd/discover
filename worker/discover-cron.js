@@ -340,6 +340,15 @@ export const checkDiscoverFeeds = async (env) => {
         httpMetadata: { contentType: 'application/json' }
       })
       await setCronState(db, 'cron:lastBackup', today)
+
+      // Each snapshot is a full point-in-time copy, not incremental — only
+      // the most recent is needed to restore, and a couple weeks of depth
+      // covers damage that wasn't noticed immediately. No need to keep more.
+      const BACKUP_RETENTION_DAYS = 14
+      const cutoff = new Date(today)
+      cutoff.setUTCDate(cutoff.getUTCDate() - BACKUP_RETENTION_DAYS)
+      const cutoffKey = `backup/discover-${cutoff.toISOString().slice(0, 10)}.json`
+      await env.R2.delete(cutoffKey).catch(err => console.error('Backup cleanup failed:', cutoffKey, err))
     }
   }
 

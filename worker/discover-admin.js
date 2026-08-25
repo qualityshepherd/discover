@@ -2,13 +2,13 @@ import { json, parseJsonBody, isClickThrough } from './utils.js'
 import {
   makeId,
   getFeed, saveFeed, getFeeds,
-  addToIndex, removeFromIndex,
+  removeFromIndex,
   getSourceData, deleteSourceData,
   isBlocked, isSourceReferencedElsewhere, getFeedsBySourceUrl,
   getAllSourceUrls,
   getPending, savePending,
   getBlocked, saveBlocked,
-  getCurator, saveCurator, deleteCurator, listCurators, addToCuratorIndex,
+  getCurator, saveCurator, deleteCurator, listCurators,
   getCandidates, saveCandidates, addDismissedDomain,
   deletePostTags
 } from './discover-db.js'
@@ -31,7 +31,7 @@ export const handleCuratorInvite = async (req, db) => {
   feed.curatorPubkey = pubkey
   feed.curatorName = curator.name
   feed.curatorUrl = curator.siteUrl
-  await Promise.all([saveCurator(db, pubkey, curator), addToCuratorIndex(db, pubkey), saveFeed(db, feed)])
+  await Promise.all([saveCurator(db, pubkey, curator), saveFeed(db, feed)])
   return json({ ok: true })
 }
 
@@ -144,7 +144,7 @@ export const handleAdd = async (req, db) => {
     lastChecked: null,
     addedAt: new Date().toISOString()
   }
-  await Promise.all([saveFeed(db, entry), addToIndex(db, id)])
+  await saveFeed(db, entry)
   return json({ ok: true, entry })
 }
 

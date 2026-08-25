@@ -17,14 +17,6 @@ binding = "DISCOVER_DB"
 database_name = "your-d1-database-name"
 database_id = ""  # wrangler d1 create your-d1-database-name
 
-[[durable_objects.bindings]]
-name = "ANALYTICS"
-class_name = "AnalyticsDO"
-
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["AnalyticsDO"]
-
 [[r2_buckets]]
 binding = "R2"
 bucket_name = ""  # wrangler r2 bucket create your-bucket-name

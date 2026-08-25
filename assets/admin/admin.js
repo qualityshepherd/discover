@@ -2,7 +2,6 @@ import { deriveKeypair, signChallenge, scorePassphrase } from '../../../../../..
 import { $, api, getToken, setToken, showError } from './admin-utils.js'
 import { renderDcEntries, loadCronStatus } from './admin-discover.js'
 import { renderCurate, updateCurateBadge } from './admin-curate.js'
-import { renderAnalytics } from './admin-analytics.js'
 
 document.title = `${location.hostname} admin`
 
@@ -10,7 +9,6 @@ document.title = `${location.hostname} admin`
 const routes = {
   '#discover': showDiscover,
   '#curate': showCurate,
-  '#analytics': showAnalytics,
   '#settings': showSettings
 }
 
@@ -23,8 +21,8 @@ const route = () => {
 window.addEventListener('hashchange', route)
 
 // ── views ─────────────────────────────────────────────────────────────────────
-const VIEWS = ['view-login', 'view-discover', 'view-curate', 'view-analytics', 'view-settings']
-const NAV_IDS = ['nav-home', 'nav-discover', 'nav-curate', 'nav-analytics', 'nav-settings']
+const VIEWS = ['view-login', 'view-discover', 'view-curate', 'view-settings']
+const NAV_IDS = ['nav-home', 'nav-discover', 'nav-curate', 'nav-settings']
 
 const showView = (id) => { VIEWS.forEach(v => $(v).classList.add('hidden')); $(id).classList.remove('hidden') }
 const showNav = () => NAV_IDS.forEach(id => $(id).classList.remove('hidden'))
@@ -58,12 +56,6 @@ async function checkCronHealth () {
   if (age > 25 * 60 * 60 * 1000) {
     el.textContent = `⚠ cron last ok ${Math.round(age / 3600000)}h ago — may be stale`
   }
-}
-
-async function showAnalytics () {
-  if (!getToken()) return showLogin()
-  showView('view-analytics'); showNav()
-  await renderAnalytics()
 }
 
 const showSlugLink = (slug) => {

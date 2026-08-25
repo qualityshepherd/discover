@@ -5,7 +5,7 @@
 // to — routing knowledge only this app has.
 import { getFeed } from './discover-db.js'
 
-const SKIP_PATHS = ['/api', '/favicon', '/robots.txt', '/sitemap']
+const SKIP_PATHS = ['/api', '/favicon', '/robots.txt', '/sitemap', '/manifest.json']
 
 const SKIP_EXTENSIONS = [
   '.bak', '.css', '.ico', '.gz', '.jpg', '.js', '.mp3', '.otf', '.png', '.rar', '.svg', '.tar', '.ttf', '.woff', '.woff2', '.zip'

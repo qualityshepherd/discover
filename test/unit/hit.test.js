@@ -10,6 +10,7 @@ test('shouldSkip: skips js by extension', t => { t.ok(shouldSkip('/src/app.js'))
 test('shouldSkip: skips /api paths', t => { t.ok(shouldSkip('/api/discover/admin/status')) })
 test('shouldSkip: skips /favicon paths', t => { t.ok(shouldSkip('/favicon.png')) })
 test('shouldSkip: skips /sitemap paths', t => { t.ok(shouldSkip('/sitemap.xml')) })
+test('shouldSkip: skips manifest.json (PWA auto-fetch, not a pageview)', t => { t.ok(shouldSkip('/manifest.json')) })
 test('shouldSkip: normal path is not skipped', t => { t.falsy(shouldSkip('/')) })
 test('shouldSkip: extension check ignores query string', t => { t.ok(shouldSkip('/style.css?v=2')) })
 

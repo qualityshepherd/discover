@@ -8,6 +8,8 @@ export const parseJsonBody = async (req) => {
   try { return await req.json() } catch { return null }
 }
 
+export const xmlAttr = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
 export const isClickThrough = (posts) => {
   if (!posts?.length) return false
   return !posts.some(p => {

@@ -1,24 +1,17 @@
 import { unit as test } from '../testpup.js'
 import { shouldSkip, identifyRssFeed, trackHit } from '../../worker/hit.js'
 
-// shouldSkip — scope filtering only. Bot/device/RSS classification now
-// happens in chalk, not here.
 test('shouldSkip: skips static extensions', t => { t.ok(shouldSkip('/assets/css/style.css')) })
 test('shouldSkip: skips png', t => { t.ok(shouldSkip('/apple-touch-icon.png')) })
 test('shouldSkip: skips mp3', t => { t.ok(shouldSkip('/pods/episode.mp3')) })
 test('shouldSkip: skips js by extension', t => { t.ok(shouldSkip('/src/app.js')) })
 test('shouldSkip: skips /api paths', t => { t.ok(shouldSkip('/api/discover/admin/status')) })
-test('shouldSkip: skips /favicon paths', t => { t.ok(shouldSkip('/favicon.png')) })
-test('shouldSkip: skips /sitemap paths', t => { t.ok(shouldSkip('/sitemap.xml')) })
-test('shouldSkip: skips manifest.json (PWA auto-fetch, not a pageview)', t => { t.ok(shouldSkip('/manifest.json')) })
-test('shouldSkip: skips /env paths (scanner probes)', t => { t.ok(shouldSkip('/env')) })
-test('shouldSkip: skips /nodeinfo paths', t => { t.ok(shouldSkip('/nodeinfo/2.1')) })
-test('shouldSkip: skips /.well-known/nodeinfo', t => { t.ok(shouldSkip('/.well-known/nodeinfo')) })
+test('shouldSkip: does not skip /favicon locally (chalk classifies it centrally)', t => { t.falsy(shouldSkip('/favicon')) })
+test('shouldSkip: does not skip /sitemap.xml locally (chalk classifies it centrally)', t => { t.falsy(shouldSkip('/sitemap.xml')) })
+test('shouldSkip: does not skip manifest.json locally (chalk classifies it centrally)', t => { t.falsy(shouldSkip('/manifest.json')) })
 test('shouldSkip: normal path is not skipped', t => { t.falsy(shouldSkip('/')) })
 test('shouldSkip: extension check ignores query string', t => { t.ok(shouldSkip('/style.css?v=2')) })
 
-// identifyRssFeed — discover has four distinct feed routes, only this app
-// knows the mapping from path to feed identifier.
 test('identifyRssFeed: personal feed', async t => {
   const feed = await identifyRssFeed('/feed/brine.xml', {})
   t.is(feed, 'brine')

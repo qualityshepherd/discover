@@ -1,13 +1,11 @@
 import { parseFeed } from './feedParser.js'
-import {
-  makeId, getFeeds, saveFeed, getSourceData, getSourceDataBulk, saveSourceData,
-  updateSourceMeta,
-  getBlocked, getMentions, saveMentions,
-  getDismissedDomains, getCandidates, saveCandidates,
-  getCronState, setCronState, getAllSourceUrls, getStaleSourceMeta,
-  savePostTags,
-  listCurators, deleteCurator, isCuratorInactive
-} from './discover-db.js'
+import { makeId, getSourceData, getSourceDataBulk, saveSourceData, updateSourceMeta, getAllSourceUrls, getStaleSourceMeta } from './db-sources.js'
+import { getFeeds, saveFeed } from './db-feeds.js'
+import { getBlocked, getDismissedDomains, getCandidates, saveCandidates } from './db-moderation.js'
+import { getMentions, saveMentions } from './db-mentions.js'
+import { getCronState, setCronState } from './db-auth.js'
+import { savePostTags } from './db-search.js'
+import { listCurators, deleteCurator, isCuratorInactive } from './db-curators.js'
 
 export const VIDEO_DOMAINS = new Set(['youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv', 'rumble.com'])
 
@@ -28,6 +26,32 @@ const stripProcessingInstructions = (xml) => xml.replace(/<\?(?!xml\s)[^?]*\?>/g
 
 const FETCH_HEADERS = { 'User-Agent': 'discover/1.0 (+https://discover.brine.dev; RSS reader)', Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*' }
 
+// Generous for even a large RSS feed, small enough to bound a malicious or
+// misbehaving server from making us buffer an unbounded response. Enforced
+// by counting streamed bytes rather than trusting Content-Length, which a
+// server can omit or lie about.
+const MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+
+export const readLimitedText = async (res, maxBytes) => {
+  const reader = res.body.getReader()
+  const chunks = []
+  let total = 0
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.length
+    if (total > maxBytes) {
+      await reader.cancel()
+      return null
+    }
+    chunks.push(value)
+  }
+  const merged = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) { merged.set(chunk, offset); offset += chunk.length }
+  return new TextDecoder().decode(merged)
+}
+
 // Manual redirect following — each hop is a counted subrequest on CF free tier.
 // Cap at 2 hops (3 total fetches max) so BATCH_SIZE=15 stays under the 50 limit.
 export const fetchSource = async (url, limit = 3) => {
@@ -42,7 +66,9 @@ export const fetchSource = async (url, limit = 3) => {
         continue
       }
       if (!res.ok) return { posts: null, config: { url }, statusCode: res.status }
-      const xml = stripProcessingInstructions(await res.text())
+      const text = await readLimitedText(res, MAX_RESPONSE_BYTES)
+      if (text === null) return { posts: null, config: { url }, statusCode: res.status, error: 'response too large' }
+      const xml = stripProcessingInstructions(text)
       return { posts: parseFeed(xml, { url, limit }), config: { url, limit }, siteUrl: parseSiteUrl(xml), statusCode: res.status }
     }
     return { posts: null, config: { url }, statusCode: 0, error: 'too many redirects' }
@@ -72,10 +98,6 @@ export const findImage = (posts) => {
   return null
 }
 
-// Cron + admin: fetch stale sources oldest-first, update source KVs,
-// recompute coverImage / updateFrequency / previewPosts on affected feeds.
-// Fetch a source URL, save to KV, return { sourceData, indexEntry }.
-// Used by admin add/edit — no existing-data fallback since source is new.
 export const fetchAndSaveSource = async (db, url) => {
   const now = Date.now()
   const result = await fetchSource(url, 20)

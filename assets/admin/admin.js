@@ -5,7 +5,6 @@ import { renderCurate, updateCurateBadge } from './admin-curate.js'
 
 document.title = `${location.hostname} admin`
 
-// ── routing ───────────────────────────────────────────────────────────────────
 const routes = {
   '#discover': showDiscover,
   '#curate': showCurate,
@@ -20,7 +19,6 @@ const route = () => {
 
 window.addEventListener('hashchange', route)
 
-// ── views ─────────────────────────────────────────────────────────────────────
 const VIEWS = ['view-login', 'view-discover', 'view-curate', 'view-settings']
 const NAV_IDS = ['nav-home', 'nav-discover', 'nav-curate', 'nav-settings']
 
@@ -92,7 +90,6 @@ $('btn-slug-save').addEventListener('click', async () => {
   }
 })
 
-// ── auth ──────────────────────────────────────────────────────────────────────
 const login = async (passphrase) => {
   const { privateKey, pubkey } = await deriveKeypair(passphrase, location.hostname)
   const { challenge } = await api('GET', '/api/challenge')
@@ -164,5 +161,5 @@ document.querySelectorAll('.eye-btn').forEach(btn => {
   })
 })
 
-// ── init ──────────────────────────────────────────────────────────────────────
+// init...
 if (getToken()) route(); else showLogin()

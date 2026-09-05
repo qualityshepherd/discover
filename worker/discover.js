@@ -1,30 +1,26 @@
-import { memberByToken, isOwnerPubkey } from './auth.js'
+import { memberByToken, isOwnerPubkey, isRateLimited, incrementAttempt } from './auth.js'
 import { json, parseJsonBody, isClickThrough } from './utils.js'
+import { makeId, getSourceData, saveSourceData, getSourceAllData, getAllSourceUrls, getStaleSourceMeta, hasNewSources } from './db-sources.js'
 import {
-  makeId, computeTags,
-  getFeed, saveFeed, getFeeds,
-  getSourceData, saveSourceData, getSourceAllData,
-  getFilteredFeeds, getTagCounts, hasNewSources, getSourceMentionCounts,
-  getNewestSourcePosts, getRandomSourcePosts, searchSources,
-  isFeedSource, isBlocked, getAllSourceUrls, getStaleSourceMeta,
-  isCuratorOf, shouldUpdateLastSeen,
-  getCurator, saveCurator,
-  getPending, savePending, getBlocked,
-  getUserFeedSlug, setUserFeedSlug, getUserFeed, setUserFeed,
-  getMentions, getCronState, getTagCloud, getPostsByTag
-} from './discover-db.js'
+  computeTags, getFeed, saveFeed, getFeeds, getFilteredFeeds, getTagCounts,
+  getNewestSourcePosts, getRandomSourcePosts, isFeedSource,
+  getUserFeedSlug, setUserFeedSlug, getUserFeed, setUserFeed
+} from './db-feeds.js'
+import { isCuratorOf, shouldUpdateLastSeen, getCurator, saveCurator } from './db-curators.js'
+import { isBlocked, getPending, savePending, getBlocked } from './db-moderation.js'
+import { getMentions, getSourceMentionCounts } from './db-mentions.js'
+import { getCronState, getRateLimit, setRateLimit } from './db-auth.js'
+import { searchSources, getTagCloud, getPostsByTag } from './db-search.js'
 import { checkDiscoverFeeds, computeFrequency, fetchSource, findImage, buildLinkGraph, buildCurateCandidates } from './discover-cron.js'
+import { handleCuratorList, handleCuratorInvite, handleCuratorRevoke } from './discover-admin-curators.js'
 import {
-  handleCuratorList, handleCuratorInvite, handleCuratorRevoke,
   handleValidate, handlePendingReject, handlePendingList, handleApprove,
   handleAdd, handleEdit, handleDelete,
-  handleSourceRefresh, handleSourceRegister,
-  handlePlaylistSourceAdd, handlePlaylistRefresh, handlePlaylistSourceRemove,
-  handleSourceEdit, handleSourceDelete,
-  handleBlockedList, handleBlockedSave,
-  handleWebping,
-  handleCurateGet, handleCurateApprove, handleCurateDismissCandidate
-} from './discover-admin.js'
+  handleSourceRefresh, handleSourceRegister, handleSourceEdit, handleSourceDelete,
+  handleBlockedList, handleBlockedSave
+} from './discover-admin-sources.js'
+import { handlePlaylistSourceAdd, handlePlaylistRefresh, handlePlaylistSourceRemove } from './discover-admin-playlists.js'
+import { handleWebping, handleCurateGet, handleCurateApprove, handleCurateDismissCandidate } from './discover-admin-curate.js'
 
 // re-export for worker/index.js and tests
 export { checkDiscoverFeeds, computeFrequency, makeId, computeTags }
@@ -257,13 +253,24 @@ const handlePreview = async (req, db) => {
   return cors(json({ title, image, posts, siteUrl: result.siteUrl || null }))
 }
 
-// POST /api/discover/submit — public submission, no auth
+// POST /api/discover/submit — public submission, no auth. Rate-limited by IP
+// since this triggers a real outbound fetch regardless of whether the
+// submission turns out to be a duplicate/pending/invalid feed.
 const handleSubmit = async (req, db) => {
+  const ip = req.headers.get('CF-Connecting-IP') || 'unknown'
+  const rlKey = `ratelimit:submit:${ip}`
+  const rlRecord = await getRateLimit(db, rlKey)
+  if (isRateLimited(rlRecord, Date.now(), 10)) {
+    return json({ error: 'too many submissions, try again later' }, 429)
+  }
+  await setRateLimit(db, rlKey, incrementAttempt(rlRecord, Date.now(), 60 * 60 * 1000))
+
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
 
   const url = body.url?.trim().replace(/\/+$/, '')
   if (!url) return json({ error: 'url required' }, 400)
+  if (url.length > 2000) return json({ error: 'url too long' }, 400)
   if (!URL.canParse(url)) return json({ error: 'invalid url' }, 400)
 
   const ok = json({ ok: true })

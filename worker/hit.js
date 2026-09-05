@@ -3,7 +3,7 @@
 // only decides scope (is this even a candidate event worth a network call)
 // and identifies which of discover's several RSS feed routes a hit belongs
 // to — routing knowledge only this app has.
-import { getFeed } from './discover-db.js'
+import { getFeed } from './db-feeds.js'
 
 const SKIP_PATHS = ['/api']
 

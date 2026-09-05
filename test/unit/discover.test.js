@@ -1,15 +1,12 @@
 import { unit as test } from '../testpup.js'
 import { computeFrequency, makeId, computeTags } from '../../worker/discover.js'
 import { isClickThrough } from '../../worker/utils.js'
-import { buildCurateCandidates } from '../../worker/discover-cron.js'
-import {
-  isBlocked,
-  isCuratorOf, shouldUpdateLastSeen, isCuratorInactive,
-  getCandidates
-} from '../../worker/discover-db.js'
+import { buildCurateCandidates, readLimitedText } from '../../worker/discover-cron.js'
+import { isBlocked, isUrlBlocked, getCandidates } from '../../worker/db-moderation.js'
+import { isCuratorOf, shouldUpdateLastSeen, isCuratorInactive } from '../../worker/db-curators.js'
 
-// ── isBlocked ─────────────────────────────────────────────────────────────────
-
+// isBlocked
+//
 const fakeBlockedDb = (list) => ({
   prepare: () => ({ all: async () => ({ results: list.map(d => ({ domain: d })) }) })
 })
@@ -38,7 +35,24 @@ test('isBlocked: handles invalid url without throwing', async t => {
   t.falsy(await isBlocked(fakeBlockedDb(['badsite.com']), ['not-a-url']))
 })
 
-// ── makeId ────────────────────────────────────────────────────────────────────
+// isUrlBlocked — hostname-exact-or-subdomain match, not a bare substring
+// check. Regression coverage for the handleValidate bug where an inline
+// url.includes(b)/hostname.includes(b) check would wrongly match domains
+// that merely contain a blocked domain as a substring.
+test('isUrlBlocked: exact hostname match', t => {
+  t.ok(isUrlBlocked('https://badsite.com/feed.xml', ['badsite.com']))
+})
+
+test('isUrlBlocked: does not match a domain that merely contains the blocked domain as a substring', t => {
+  t.falsy(isUrlBlocked('https://notbadsite.com/feed.xml', ['badsite.com']))
+  t.falsy(isUrlBlocked('https://badsite.com.evil.org/feed.xml', ['badsite.com']))
+})
+
+test('isUrlBlocked: matches a real subdomain', t => {
+  t.ok(isUrlBlocked('https://feed.badsite.com/feed.xml', ['badsite.com']))
+})
+
+// makeId
 
 test('makeId: same url returns same id', t => {
   t.is(makeId('https://example.com/feed.xml'), makeId('https://example.com/feed.xml'))
@@ -52,7 +66,7 @@ test('makeId: returns non-empty string', t => {
   t.ok(makeId('https://example.com').length > 0)
 })
 
-// ── computeTags ───────────────────────────────────────────────────────────────
+// computeTags
 
 test('computeTags: counts tags across feeds', t => {
   const feeds = [
@@ -89,7 +103,7 @@ test('computeTags: empty feeds returns empty array', t => {
   t.deepEqual(computeTags([]), [])
 })
 
-// ── computeFrequency ──────────────────────────────────────────────────────────
+// computeFrequency
 
 const daysAgo = (n) => new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString()
 
@@ -138,7 +152,7 @@ test('computeFrequency: exactly 8 posts returns weekly', t => {
   t.is(computeFrequency(posts), 'weekly')
 })
 
-// ── isCuratorOf ───────────────────────────────────────────────────────────────
+// isCuratorOf
 
 test('isCuratorOf: true when playlistId matches', t => {
   t.ok(isCuratorOf({ playlistId: 'abc' }, 'abc'))
@@ -152,7 +166,7 @@ test('isCuratorOf: false for null curator', t => {
   t.falsy(isCuratorOf(null, 'abc'))
 })
 
-// ── shouldUpdateLastSeen ──────────────────────────────────────────────────────
+// shouldUpdateLastSeen
 
 test('shouldUpdateLastSeen: true when lastSeen never set', t => {
   t.ok(shouldUpdateLastSeen({}))
@@ -168,7 +182,7 @@ test('shouldUpdateLastSeen: false when lastSeen < 24hrs ago', t => {
   t.falsy(shouldUpdateLastSeen({ lastSeen: ts }))
 })
 
-// ── isCuratorInactive ─────────────────────────────────────────────────────────
+// isCuratorInactive
 
 test('isCuratorInactive: true when lastSeen > 180 days ago', t => {
   const ts = new Date(Date.now() - 181 * 24 * 60 * 60 * 1000).toISOString()
@@ -184,7 +198,7 @@ test('isCuratorInactive: false when no lastSeen', t => {
   t.falsy(isCuratorInactive({}))
 })
 
-// ── isClickThrough ────────────────────────────────────────────────────────────
+// isClickThrough
 
 test('isClickThrough: false for empty/null posts', t => {
   t.falsy(isClickThrough([]))
@@ -219,7 +233,28 @@ test('isClickThrough: false when one post has >100 chars of text', t => {
   t.falsy(isClickThrough(posts))
 })
 
-// ── buildCurateCandidates ─────────────────────────────────────────────────────
+// readLimitedText — enforces fetchSource's response-size cap by counting
+// streamed bytes, not trusting Content-Length.
+const streamOf = (chunks) => new Response(new ReadableStream({
+  start (controller) {
+    for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk))
+    controller.close()
+  }
+}))
+
+test('readLimitedText: returns full text under the limit', async t => {
+  t.is(await readLimitedText(streamOf(['hello ', 'world']), 1000), 'hello world')
+})
+
+test('readLimitedText: exact boundary is not rejected', async t => {
+  t.is(await readLimitedText(streamOf(['abcde']), 5), 'abcde')
+})
+
+test('readLimitedText: returns null when the stream exceeds the byte limit', async t => {
+  t.is(await readLimitedText(streamOf(['a'.repeat(50)]), 10), null)
+})
+
+// buildCurateCandidates
 
 const noProbe = async () => null
 const feedProbe = async () => 'https://found.example.com/feed'

@@ -5,7 +5,7 @@ import {
   isValidToken, scorePassphrase
 } from '../assets/lib/keys.js'
 import { json, parseJsonBody } from './utils.js'
-import { getSession, createSession, getRateLimit, setRateLimit, deleteRateLimit } from './discover-db.js'
+import { getSession, createSession, getRateLimit, setRateLimit, deleteRateLimit } from './db-auth.js'
 
 export { scorePassphrase, isValidToken, makeSession, isSessionValid }
 

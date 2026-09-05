@@ -1,7 +1,7 @@
 import { trackHit } from './hit.js'
 import { handleDiscover, handleMentionsFeed, checkDiscoverFeeds, handleUserFeed, handlePersonalRss } from './discover.js'
 import { handleAuth, memberByToken } from './auth.js'
-import { getFeed } from './discover-db.js'
+import { getFeed } from './db-feeds.js'
 import { json } from './utils.js'
 
 const escHtml = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

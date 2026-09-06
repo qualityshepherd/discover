@@ -34,59 +34,67 @@ const PRIVATE = [
 
 export default {
   async fetch (req, env, ctx) {
-    const url = new URL(req.url)
-    const path = url.pathname
+    const response = await handleRequest(req, env, ctx)
+    ctx.waitUntil(trackHit(req, env, response.status))
+    return response
+  },
 
-    ctx.waitUntil(trackHit(req, env))
+  async scheduled (event, env, ctx) {
+    ctx.waitUntil(checkDiscoverFeeds(env).catch(err => console.error('Discover check failed:', err)))
+  }
+}
 
-    if (path === '/') return withSec(env.ASSETS.fetch(new Request(new URL('/discover/index.html', req.url))))
+async function handleRequest (req, env, ctx) {
+  const url = new URL(req.url)
+  const path = url.pathname
 
-    if (path === '/api/hit' && req.method === 'POST') {
-      ctx.waitUntil(trackHit(req, env))
-      return new Response('ok')
-    }
+  if (path === '/') return withSec(env.ASSETS.fetch(new Request(new URL('/discover/index.html', req.url))))
 
-    // Mentions feeds — public RSS per source
-    const mentionsMatch = path.match(/^\/api\/mentions\/([^/]+)\.xml$/)
-    if (mentionsMatch) return handleMentionsFeed(env.DISCOVER_DB, mentionsMatch[1], req.url)
+  if (path === '/api/hit' && req.method === 'POST') {
+    return new Response('ok')
+  }
 
-    // Discover routes — public except /admin sub-paths (auth handled inside)
-    if (path.startsWith('/api/discover')) return handleDiscover(req, env, ctx)
+  // Mentions feeds — public RSS per source
+  const mentionsMatch = path.match(/^\/api\/mentions\/([^/]+)\.xml$/)
+  if (mentionsMatch) return handleMentionsFeed(env.DISCOVER_DB, mentionsMatch[1], req.url)
 
-    // Auth gate — all /api/* routes not in PUBLIC_API require a valid token
-    if (path.startsWith('/api/') && !PUBLIC_API.has(path)) {
-      const token = req.headers.get('authorization')?.replace('Bearer ', '')
-      const pubkey = token ? await memberByToken(token, env.DISCOVER_DB) : null
-      if (!pubkey) return json({ error: 'unauthorized' }, 401)
-    }
+  // Discover routes — public except /admin sub-paths (auth handled inside)
+  if (path.startsWith('/api/discover')) return handleDiscover(req, env, ctx)
 
-    // Auth routes
-    if (path === '/api/challenge' || path === '/api/login' || path === '/api/me') {
-      return handleAuth(req, env)
-    }
+  // Auth gate — all /api/* routes not in PUBLIC_API require a valid token
+  if (path.startsWith('/api/') && !PUBLIC_API.has(path)) {
+    const token = req.headers.get('authorization')?.replace('Bearer ', '')
+    const pubkey = token ? await memberByToken(token, env.DISCOVER_DB) : null
+    if (!pubkey) return json({ error: 'unauthorized' }, 401)
+  }
 
-    // Sitemap
-    if (path === '/sitemap.xml') {
-      const rows = await env.DISCOVER_DB.prepare('SELECT id FROM feeds').all()
-      const base = `https://${env.DOMAIN_NAME}`
-      const locs = rows.results.map(r => `  <url><loc>${base}/discover/${r.id}</loc></url>`).join('\n')
-      const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>${base}/</loc></url>\n  <url><loc>${base}/about</loc></url>\n${locs}\n</urlset>`
-      return new Response(xml, { headers: { 'Content-Type': 'application/xml;charset=utf-8' } })
-    }
+  // Auth routes
+  if (path === '/api/challenge' || path === '/api/login' || path === '/api/me') {
+    return handleAuth(req, env)
+  }
 
-    // Discover UI
-    if (path === '/discover') return Response.redirect(new URL('/', req.url), 301)
-    if (path.startsWith('/discover/') && !path.includes('.')) {
-      const id = path.slice('/discover/'.length)
-      const baseRes = env.ASSETS.fetch(new Request(new URL('/discover/index.html', req.url)))
-      if (!id) return withSec(baseRes)
-      const feed = await getFeed(env.DISCOVER_DB, id).catch(() => null)
-      if (!feed) return withSec(baseRes)
-      const title = `${feed.title} · discover rss feeds worth reading`
-      const desc = feed.description || 'A curated RSS playlist on discover.'
-      const img = feed.coverImage?.startsWith('http') ? feed.coverImage : `https://${env.DOMAIN_NAME}/images/og.png`
-      const canonical = `https://${env.DOMAIN_NAME}/discover/${id}`
-      const inject = [
+  // Sitemap
+  if (path === '/sitemap.xml') {
+    const rows = await env.DISCOVER_DB.prepare('SELECT id FROM feeds').all()
+    const base = `https://${env.DOMAIN_NAME}`
+    const locs = rows.results.map(r => `  <url><loc>${base}/discover/${r.id}</loc></url>`).join('\n')
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>${base}/</loc></url>\n  <url><loc>${base}/about</loc></url>\n${locs}\n</urlset>`
+    return new Response(xml, { headers: { 'Content-Type': 'application/xml;charset=utf-8' } })
+  }
+
+  // Discover UI
+  if (path === '/discover') return Response.redirect(new URL('/', req.url), 301)
+  if (path.startsWith('/discover/') && !path.includes('.')) {
+    const id = path.slice('/discover/'.length)
+    const baseRes = env.ASSETS.fetch(new Request(new URL('/discover/index.html', req.url)))
+    if (!id) return withSec(baseRes)
+    const feed = await getFeed(env.DISCOVER_DB, id).catch(() => null)
+    if (!feed) return withSec(baseRes)
+    const title = `${feed.title} · discover rss feeds worth reading`
+    const desc = feed.description || 'A curated RSS playlist on discover.'
+    const img = feed.coverImage?.startsWith('http') ? feed.coverImage : `https://${env.DOMAIN_NAME}/images/og.png`
+    const canonical = `https://${env.DOMAIN_NAME}/discover/${id}`
+    const inject = [
         `  <meta name="description" content="${escHtml(desc)}">`,
         '  <meta property="og:type" content="website">',
         '  <meta property="og:site_name" content="discover">',
@@ -99,47 +107,42 @@ export default {
         `  <meta name="twitter:description" content="${escHtml(desc)}">`,
         `  <meta name="twitter:image" content="${escHtml(img)}">`,
         `  <link rel="canonical" href="${escHtml(canonical)}">`
-      ].join('\n')
-      const html = await (await baseRes).text()
-      return htmlRes(html.replace('<title>', inject + '\n  <title>'))
-    }
-
-    // Linkable views
-    if (path === '/new' || path === '/random') return withSec(env.ASSETS.fetch(new Request(new URL('/discover/index.html', req.url))))
-
-    // Personal RSS feed — must be before asset fallthrough (path has a dot)
-    const feedRssMatch = path.match(/^\/feed\/([^/]+)\.xml$/)
-    if (feedRssMatch) return handlePersonalRss(req, env, feedRssMatch[1])
-
-    // User feed API
-    if (path.startsWith('/api/feed')) return handleUserFeed(req, env)
-
-    // Feed UI
-    if (path === '/feed') return withSec(env.ASSETS.fetch(new Request(new URL('/feed/index.html', req.url))))
-
-    // About UI
-    if (path === '/about') return withSec(env.ASSETS.fetch(new Request(new URL('/about/index.html', req.url))))
-
-    // Admin UI
-    if (path === '/admin' || (path.startsWith('/admin/') && !path.includes('.'))) {
-      return withSec(env.ASSETS.fetch(new Request(new URL('/admin/index.html', req.url))))
-    }
-
-    // Block private paths
-    if (PRIVATE.some(p => path === p || path.startsWith(p))) {
-      return new Response('Not found', { status: 404 })
-    }
-
-    // Unknown page routes → 404
-    if (!path.includes('.')) {
-      const body = await env.ASSETS.fetch(new Request(new URL('/404.html', req.url))).then(r => r.text()).catch(() => 'Not found')
-      return htmlRes(body, { status: 404 })
-    }
-
-    return env.ASSETS.fetch(req)
-  },
-
-  async scheduled (event, env, ctx) {
-    ctx.waitUntil(checkDiscoverFeeds(env).catch(err => console.error('Discover check failed:', err)))
+    ].join('\n')
+    const html = await (await baseRes).text()
+    return htmlRes(html.replace('<title>', inject + '\n  <title>'))
   }
+
+  // Linkable views
+  if (path === '/new' || path === '/random') return withSec(env.ASSETS.fetch(new Request(new URL('/discover/index.html', req.url))))
+
+  // Personal RSS feed — must be before asset fallthrough (path has a dot)
+  const feedRssMatch = path.match(/^\/feed\/([^/]+)\.xml$/)
+  if (feedRssMatch) return handlePersonalRss(req, env, feedRssMatch[1])
+
+  // User feed API
+  if (path.startsWith('/api/feed')) return handleUserFeed(req, env)
+
+  // Feed UI
+  if (path === '/feed') return withSec(env.ASSETS.fetch(new Request(new URL('/feed/index.html', req.url))))
+
+  // About UI
+  if (path === '/about') return withSec(env.ASSETS.fetch(new Request(new URL('/about/index.html', req.url))))
+
+  // Admin UI
+  if (path === '/admin' || (path.startsWith('/admin/') && !path.includes('.'))) {
+    return withSec(env.ASSETS.fetch(new Request(new URL('/admin/index.html', req.url))))
+  }
+
+  // Block private paths
+  if (PRIVATE.some(p => path === p || path.startsWith(p))) {
+    return new Response('Not found', { status: 404 })
+  }
+
+  // Unknown page routes → 404
+  if (!path.includes('.')) {
+    const body = await env.ASSETS.fetch(new Request(new URL('/404.html', req.url))).then(r => r.text()).catch(() => 'Not found')
+    return htmlRes(body, { status: 404 })
+  }
+
+  return env.ASSETS.fetch(req)
 }

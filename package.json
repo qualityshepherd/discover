@@ -1,10 +1,10 @@
 {
   "name": "discover",
-  "version": "1.0.0",
-  "description": "Curated RSS discovery. No algorithm. No ads.",
-  "type": "module",
   "author": "brine",
-  "license": "AGPL",
+  "license": "AGPL-3.0-or-later",
+  "description": "Curated RSS discovery. No algorithm. No ads.",
+  "version": "1.0.0",
+  "type": "module",
   "main": "app.js",
   "standard": {
     "env": [

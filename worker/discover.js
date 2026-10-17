@@ -22,6 +22,7 @@ import {
 import { handlePlaylistSourceAdd, handlePlaylistRefresh, handlePlaylistSourceRemove } from './discover-admin-playlists.js'
 import { handleWebping, handleCurateGet, handleCurateApprove, handleCurateDismissCandidate } from './discover-admin-curate.js'
 import { handleOpml, handleFeedOpml, handleAllOpml, handlePlaylistRss } from './discover-opml.js'
+import { EDGE_CACHE_CONTROL } from './cache.js'
 
 // re-export for worker/index.js and tests
 export { checkDiscoverFeeds, computeFrequency, makeId, computeTags }
@@ -441,7 +442,7 @@ export const handleMentionsFeed = async (db, sourceId, reqUrl) => {
 </rss>`
 
   return new Response(xml, {
-    headers: { 'Content-Type': 'application/rss+xml; charset=utf-8', 'Cache-Control': 'no-store' }
+    headers: { 'Content-Type': 'application/rss+xml; charset=utf-8', 'Cache-Control': EDGE_CACHE_CONTROL }
   })
 }
 
@@ -530,7 +531,7 @@ export const handlePersonalRss = async (req, env, slug) => {
   return new Response(xml, {
     headers: {
       'Content-Type': 'application/rss+xml; charset=utf-8',
-      'Cache-Control': 'no-store'
+      'Cache-Control': EDGE_CACHE_CONTROL
     }
   })
 }

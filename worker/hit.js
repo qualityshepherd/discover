@@ -5,6 +5,24 @@
 // to — routing knowledge only this app has.
 import { getFeed } from './db-feeds.js'
 
+// Playlist titles only label analytics events, so a stale title is harmless.
+// Memoize per isolate so frequent RSS polling doesn't query D1 on every hit.
+const TITLE_TTL_MS = 60 * 60 * 1000
+const TITLE_CACHE_MAX = 500
+const titleCache = new Map()
+
+export const clearTitleCache = () => titleCache.clear()
+
+const playlistLabel = async (env, id) => {
+  const cached = titleCache.get(id)
+  if (cached && cached.expires > Date.now()) return cached.label
+  const feed = await getFeed(env.DISCOVER_DB, id).catch(() => null)
+  const label = feed?.title || id
+  if (titleCache.size >= TITLE_CACHE_MAX) titleCache.clear()
+  titleCache.set(id, { label, expires: Date.now() + TITLE_TTL_MS })
+  return label
+}
+
 const SKIP_PATHS = ['/api']
 
 const SKIP_EXTENSIONS = [
@@ -28,10 +46,7 @@ export async function identifyRssFeed (path, env) {
   if (mentions) return `mentions:${mentions[1]}`
 
   const playlist = path.match(/^\/api\/discover\/([^/]+)\/rss$/)
-  if (playlist) {
-    const feed = await getFeed(env.DISCOVER_DB, playlist[1]).catch(() => null)
-    return feed?.title || playlist[1]
-  }
+  if (playlist) return playlistLabel(env, playlist[1])
 
   if (path.startsWith('/assets/rss/') && path.endsWith('.xml')) {
     return path.split('/').pop()

@@ -3,6 +3,7 @@ import { handleDiscover, handleMentionsFeed, checkDiscoverFeeds, handleUserFeed,
 import { handleAuth, memberByToken } from './auth.js'
 import { getFeed } from './db-feeds.js'
 import { json } from './utils.js'
+import { isEdgeCacheable, withEdgeCache } from './cache.js'
 
 const escHtml = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
@@ -45,6 +46,11 @@ export default {
 }
 
 async function handleRequest (req, env, ctx) {
+  if (isEdgeCacheable(req)) return withEdgeCache(req, ctx, () => route(req, env, ctx))
+  return route(req, env, ctx)
+}
+
+async function route (req, env, ctx) {
   const url = new URL(req.url)
   const path = url.pathname
 

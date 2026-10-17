@@ -1,5 +1,5 @@
 import { unit as test } from '../testpup.js'
-import { shouldSkip, identifyRssFeed, trackHit } from '../../worker/hit.js'
+import { shouldSkip, identifyRssFeed, trackHit, clearTitleCache } from '../../worker/hit.js'
 
 test('shouldSkip: skips static extensions', t => { t.ok(shouldSkip('/assets/css/style.css')) })
 test('shouldSkip: skips png', t => { t.ok(shouldSkip('/apple-touch-icon.png')) })
@@ -57,6 +57,28 @@ test('identifyRssFeed: discover playlist feed falls back to id when lookup fails
   }
   const feed = await identifyRssFeed('/api/discover/missing/rss', { DISCOVER_DB: mockDb })
   t.is(feed, 'missing')
+})
+
+test('identifyRssFeed: playlist title lookup is memoized across polls', async t => {
+  clearTitleCache()
+  let lookups = 0
+  const mockDb = {
+    prepare (query) {
+      return {
+        bind () {
+          return {
+            first: async () => { if (query.includes('FROM feeds')) lookups++; return query.includes('FROM feeds') ? { id: 'memo1', title: 'Memo List' } : null },
+            all: async () => ({ results: [] })
+          }
+        }
+      }
+    }
+  }
+  const env = { DISCOVER_DB: mockDb }
+  t.is(await identifyRssFeed('/api/discover/memo1/rss', env), 'Memo List')
+  t.is(await identifyRssFeed('/api/discover/memo1/rss', env), 'Memo List')
+  t.is(await identifyRssFeed('/api/discover/memo1/rss', env), 'Memo List')
+  t.is(lookups, 1)
 })
 
 async function withMockFetch (impl, fn) {

@@ -1,6 +1,7 @@
 import { json, xmlAttr } from './utils.js'
 import { getFeed, getFeeds } from './db-feeds.js'
 import { getSourceData } from './db-sources.js'
+import { EDGE_CACHE_CONTROL } from './cache.js'
 
 export const toOpml = (feeds) => {
   const outlines = feeds.flatMap(f =>
@@ -89,7 +90,7 @@ export const handlePlaylistRss = async (db, id, reqUrl) => {
   return new Response(xml, {
     headers: {
       'Content-Type': 'application/rss+xml; charset=utf-8',
-      'Cache-Control': 'no-store'
+      'Cache-Control': EDGE_CACHE_CONTROL
     }
   })
 }

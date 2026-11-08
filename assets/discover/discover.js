@@ -305,7 +305,11 @@ const loadNew = async () => {
 
   const appendPage = (posts) => {
     loadedPosts = loadedPosts.concat(posts)
-    setFeedContext(loadedPosts)
+    // let the modal's own prev/next fetch the next page itself once you
+    // read past what's loaded so far - reading via arrow keys never
+    // scrolls the sentinel into view, so the IntersectionObserver below
+    // never fires on its own
+    setFeedContext(loadedPosts, done ? null : () => fetchPage())
     initModal()
     const frag = document.createElement('div')
     frag.innerHTML = posts.map(feedsItemTemplate).join('')

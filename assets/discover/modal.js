@@ -4,11 +4,16 @@ let feedItems = new Map()
 let feedList = []
 let currentIndex = -1
 let modalReady = false
+let loadMore = null
 
-// Called by discover.js after loading posts for a drawer or playlist
-export const setFeedContext = (posts) => {
+// Called by discover.js after loading posts for a drawer or playlist.
+// onLoadMore is optional - only New paginates, so only it passes one. When
+// prev/next hits the end of what's loaded so far, the modal calls it to
+// fetch the next page instead of just stopping there.
+export const setFeedContext = (posts, onLoadMore = null) => {
   feedList = posts
   feedItems = new Map(posts.map(p => [p.url, p]))
+  loadMore = onLoadMore
 }
 
 export const getFeedItem = (url) => feedItems.get(url)
@@ -21,6 +26,7 @@ export const resetModal = () => {
   feedItems = new Map()
   feedList = []
   currentIndex = -1
+  loadMore = null
 }
 
 export const closeModal = () => {
@@ -50,7 +56,7 @@ const renderModalItem = (modal, item) => {
     subscribeEl.classList.add('hidden')
   }
   modal.querySelector('.feed-modal-prev').disabled = currentIndex <= 0
-  modal.querySelector('.feed-modal-next').disabled = currentIndex >= feedList.length - 1
+  modal.querySelector('.feed-modal-next').disabled = currentIndex >= feedList.length - 1 && !loadMore
 
   const sourceEl = modal.querySelector('.feed-modal-source')
   const domain = feedDomain(item.feed?.url || item.url || '')
@@ -62,8 +68,17 @@ const renderModalItem = (modal, item) => {
   sourceEl.innerHTML = feedName ? `${favicon}<span>${feedName}</span>${playlist}` : ''
 }
 
-const navigateTo = (index) => {
-  if (index < 0 || index >= feedList.length) return
+let loadingMore = false
+
+const navigateTo = async (index) => {
+  if (index < 0) return
+  if (index >= feedList.length) {
+    if (!loadMore || loadingMore) return
+    loadingMore = true
+    await loadMore()
+    loadingMore = false
+    if (index >= feedList.length) return // really was the end
+  }
   currentIndex = index
   renderModalItem(document.getElementById('feed-modal'), feedList[index])
 }

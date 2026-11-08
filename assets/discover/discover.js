@@ -276,17 +276,6 @@ const ensureMentionCounts = async () => {
   if (!allTags.length) allTags = data.tags || []
 }
 
-// paint the last page from sessionStorage instantly, fetch fresh behind it -
-// skips the loading flash for anyone who's already been here this session.
-// only caching page one, scrolling further always hits the network
-const NEW_CACHE_KEY = 'discover_new_cache'
-const readNewCache = () => {
-  try { return JSON.parse(sessionStorage.getItem(NEW_CACHE_KEY) || 'null') } catch { return null }
-}
-const writeNewCache = (posts) => {
-  try { sessionStorage.setItem(NEW_CACHE_KEY, JSON.stringify(posts)) } catch {}
-}
-
 const NEW_PAGE = 20
 
 const loadNew = async () => {
@@ -295,6 +284,8 @@ const loadNew = async () => {
   showHeader(false, false)
   const cards = document.getElementById('discover-cards')
   document.getElementById('tag-cloud').innerHTML = ''
+  cards.innerHTML = '<p class="muted">loading…</p>'
+  await ensureMentionCounts()
 
   let loadedPosts = []
   let cursor = null
@@ -309,28 +300,13 @@ const loadNew = async () => {
     // read past what's loaded so far - reading via arrow keys never
     // scrolls the sentinel into view, so the IntersectionObserver below
     // never fires on its own
-    setFeedContext(loadedPosts, done ? null : () => fetchPage())
+    setFeedContext(loadedPosts, done ? null : fetchPage)
     initModal()
     const frag = document.createElement('div')
     frag.innerHTML = posts.map(feedsItemTemplate).join('')
     cards.insertBefore(frag, sentinel)
     injectSourceRssButtons(frag)
     injectMentionsLinks(frag, mentionCounts)
-  }
-
-  const cached = readNewCache()
-  if (cached?.length) {
-    await ensureMentionCounts()
-    cards.innerHTML = ''
-    cards.appendChild(sentinel)
-    appendPage(cached)
-    // resume after the cached page, not from the start - otherwise we'd
-    // refetch and duplicate what's already painted
-    const last = cached[cached.length - 1]
-    cursor = btoa(JSON.stringify({ date: last.date, url: last.url }))
-  } else {
-    cards.innerHTML = '<p class="muted">loading…</p>'
-    await ensureMentionCounts()
   }
 
   const fetchPage = async () => {
@@ -343,15 +319,11 @@ const loadNew = async () => {
     cursor = data.nextCursor
     if (!data.nextCursor) done = true
 
-    const isFirstPage = loadedPosts.length === 0 && !cached?.length
     if (!data.posts.length) {
-      if (isFirstPage) cards.innerHTML = '<p class="muted">no new posts yet.</p>'
+      if (!loadedPosts.length) cards.innerHTML = '<p class="muted">no new posts yet.</p>'
       return
     }
-    // only cache page one - not the replay (nothing changed), not later
-    // pages (that'd just grow forever)
-    if (!cached?.length && loadedPosts.length === 0) writeNewCache(data.posts)
-    if (isFirstPage) cards.innerHTML = ''
+    if (!loadedPosts.length) cards.innerHTML = ''
     if (!cards.contains(sentinel)) cards.appendChild(sentinel)
     appendPage(data.posts)
   }

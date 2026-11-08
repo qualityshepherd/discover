@@ -11,6 +11,10 @@ const iso = (daysAgo, hhmmss = '00:00:00') => {
   return d.toISOString().slice(0, 10) + `T${hhmmss}Z`
 }
 
+// same as iso() but spaced a second apart instead of a day apart, for
+// fixtures that need many posts all safely inside the 30-day cutoff
+const isoRecent = (secondsAgo) => new Date(Date.now() - secondsAgo * 1000).toISOString()
+
 const sourceRow = (url, feedId, posts) => ({
   url, posts: JSON.stringify(posts), feed_id: feedId, feed_title: `Feed ${feedId}`, playlist_id: feedId, playlist_slug: `feed-${feedId}`
 })
@@ -49,13 +53,41 @@ test('handleNew: paginates - limit caps the page and returns a cursor', async t 
   t.is(body2.nextCursor, null) // last page, fewer than limit
 })
 
-test('handleNew: no posts left after the last page means no cursor and nothing missing', async t => {
+test('handleNew: a single post fits in one page - no cursor, nothing missing', async t => {
   const db = mockDb([
     sourceRow('https://a.com', 'p1', [{ url: 'https://a.com/1', date: iso(0) }])
   ])
   const res = await handleNew(db, new URL(req('?limit=20').url))
   const body = await res.json()
+  t.is(body.posts.length, 1)
+  t.is(body.posts[0].url, 'https://a.com/1')
   t.is(body.nextCursor, null)
+})
+
+// limit is the whole point of today's fix - an unbounded or too-generous
+// limit puts the 7.6MB bug right back
+test('handleNew: limit is clamped to 100 even if asked for more', async t => {
+  const posts = Array.from({ length: 150 }, (_, i) => ({ url: `https://a.com/${i}`, date: isoRecent(i) }))
+  const db = mockDb([sourceRow('https://a.com', 'p1', posts)])
+  const res = await handleNew(db, new URL(req('?limit=9999').url))
+  const body = await res.json()
+  t.is(body.posts.length, 100)
+})
+
+test('handleNew: missing limit defaults to 20', async t => {
+  const posts = Array.from({ length: 30 }, (_, i) => ({ url: `https://a.com/${i}`, date: iso(i) }))
+  const db = mockDb([sourceRow('https://a.com', 'p1', posts)])
+  const res = await handleNew(db, new URL(req('').url))
+  const body = await res.json()
+  t.is(body.posts.length, 20)
+})
+
+test('handleNew: zero or negative limit is clamped up to 1, not treated as "no limit"', async t => {
+  const posts = Array.from({ length: 5 }, (_, i) => ({ url: `https://a.com/${i}`, date: iso(i) }))
+  const db = mockDb([sourceRow('https://a.com', 'p1', posts)])
+  const res = await handleNew(db, new URL(req('?limit=0').url))
+  const body = await res.json()
+  t.is(body.posts.length, 1)
 })
 
 test('handleNew: posts sharing the exact same date (cron batch) are not skipped or repeated across the page boundary', async t => {

@@ -334,15 +334,7 @@
   padding-bottom: var(--space-7);
 }
 
-/* my feed page */
-
-
-.feed-page-title {
-  font-family: "header", sans-serif;
-  font-size: var(--text-xl);
-  font-weight: 700;
-  color: var(--color-text-primary);
-}
+/* suggest-a-feed form (about page) */
 
 .feed-add-wrap {
   display: flex;
@@ -364,45 +356,6 @@
 
 .feed-add-status.error { color: var(--color-danger, #e05c5c); }
 .feed-add-status.ok { color: #6bbf8a; }
-
-.feed-custom-remove {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--color-text-muted);
-  padding: 0 0 0 2px;
-  font-size: 0.7em;
-  line-height: 1;
-  vertical-align: middle;
-}
-
-.feed-custom-remove:hover { color: var(--color-text-primary); }
-
-.feed-post-remove {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: transparent;
-  padding: 0 0 0 4px;
-  font-size: 0.7em;
-  line-height: 1;
-  flex-shrink: 0;
-  transition: color 0.1s;
-}
-
-.feed-post:hover .feed-post-remove { color: var(--color-text-muted); }
-.feed-post-remove:hover { color: var(--color-text-primary) !important; }
-
-.feed-playlist-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-bottom: var(--space-5);
-}
-
-.feed-playlist-strip.hidden {
-  display: none;
-}
 
 .feed-posts {
   display: flex;

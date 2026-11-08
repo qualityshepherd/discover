@@ -113,7 +113,8 @@ export const handleNew = async (db, url) => {
     .filter(p => p?.url && p?.date && p.date >= cutoff && !seen.has(p.url) && seen.add(p.url))
     .sort((a, b) => new Date(b.date) - new Date(a.date) || a.url.localeCompare(b.url))
 
-  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit')) || 20, 1), 100)
+  const rawLimit = parseInt(url.searchParams.get('limit'))
+  const limit = Math.min(Math.max(Number.isNaN(rawLimit) ? 20 : rawLimit, 1), 100)
   const beforeParam = url.searchParams.get('before')
   let before = null
   if (beforeParam) { try { before = JSON.parse(atob(beforeParam)) } catch {} }

@@ -1,10 +1,9 @@
 import { memberByToken, isOwnerPubkey, isRateLimited, incrementAttempt } from './auth.js'
 import { json, parseJsonBody, isClickThrough, xmlAttr } from './utils.js'
-import { makeId, getSourceData, saveSourceData, getSourceAllData, getAllSourceUrls, getStaleSourceMeta, hasNewSources } from './db-sources.js'
+import { makeId, saveSourceData, getSourceAllData, getAllSourceUrls, getStaleSourceMeta, hasNewSources } from './db-sources.js'
 import {
   computeTags, getFeed, saveFeed, getFeeds, getFilteredFeeds, getTagCounts,
-  getNewestSourcePosts, getRandomSourcePosts, isFeedSource,
-  getUserFeedSlug, setUserFeedSlug, getUserFeed, setUserFeed
+  getNewestSourcePosts, getRandomSourcePosts, isFeedSource, backfillSlugs
 } from './db-feeds.js'
 import { isCuratorOf, shouldUpdateLastSeen, getCurator, saveCurator } from './db-curators.js'
 import { isBlocked, getPending, savePending, getBlocked } from './db-moderation.js'
@@ -21,7 +20,7 @@ import {
 } from './discover-admin-sources.js'
 import { handlePlaylistSourceAdd, handlePlaylistRefresh, handlePlaylistSourceRemove } from './discover-admin-playlists.js'
 import { handleWebping, handleCurateGet, handleCurateApprove, handleCurateDismissCandidate } from './discover-admin-curate.js'
-import { handleOpml, handleFeedOpml, handleAllOpml, handlePlaylistRss } from './discover-opml.js'
+import { handleOpml, handlePlaylistRss } from './discover-opml.js'
 import { EDGE_CACHE_CONTROL } from './cache.js'
 
 // re-export for worker/index.js and tests
@@ -85,34 +84,12 @@ const resolveSourceAll = async (db, allSourceUrls) => {
   return sourceAll
 }
 
-// POST /api/discover/feed
-const handleFeed = async (db, req) => {
-  const body = await parseJsonBody(req)
-  const ids = Array.isArray(body?.ids) ? body.ids.filter(Boolean) : []
-  const sourceUrls = Array.isArray(body?.sources) ? body.sources.filter(Boolean) : []
-  if (!ids.length && !sourceUrls.length) return cors(json({ posts: [] }))
-
-  const feeds = (await Promise.all(ids.map(id => getFeed(db, id)))).filter(Boolean)
-  const allSourceUrls = [...new Set([...feeds.flatMap(f => f.sources || []), ...sourceUrls])]
-
-  const sourceDatas = await Promise.all(allSourceUrls.map(u => getSourceData(db, u)))
-
-  const seen = new Set()
-  const posts = sourceDatas
-    .filter(Boolean)
-    .flatMap(s => s.posts || [])
-    .filter(p => { if (!p.url || seen.has(p.url)) return false; seen.add(p.url); return true })
-    .sort((a, b) => new Date(b.date) - new Date(a.date))
-
-  return cors(json({ posts }))
-}
-
 // GET /api/discover/random
 const handleRandom = async (db) => {
   const sources = await getRandomSourcePosts(db)
   const seen = new Set()
   const all = sources
-    .flatMap(s => (s.posts || []).map(p => ({ ...p, fromPlaylist: s.playlist.title, fromPlaylistId: s.playlist.id })))
+    .flatMap(s => (s.posts || []).map(p => ({ ...p, fromPlaylist: s.playlist.title, fromPlaylistId: s.playlist.id, fromPlaylistSlug: s.playlist.slug })))
     .filter(p => p?.url && !seen.has(p.url) && seen.add(p.url))
   for (let i = all.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -121,55 +98,32 @@ const handleRandom = async (db) => {
   return cors(json(all.slice(0, 100)))
 }
 
-// GET /api/discover/new
-const handleNew = async (db) => {
+// GET /api/discover/new?limit=20&before=<cursor>
+// used to dump every post from every source in one response - 7.6MB, 2.3s,
+// that's what was actually behind the "stuck loading" complaints. paginated
+// now. cursor is (date, url) not an offset, so new posts landing mid-scroll
+// can't shift pages around, and url breaks ties when a cron batch drops a
+// bunch of posts with the same timestamp
+export const handleNew = async (db, url) => {
   const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
   const sources = await getNewestSourcePosts(db)
   const seen = new Set()
   const posts = sources
-    .flatMap(s => (s.posts || []).map(p => ({ ...p, fromPlaylist: s.playlist.title, fromPlaylistId: s.playlist.id })))
+    .flatMap(s => (s.posts || []).map(p => ({ ...p, fromPlaylist: s.playlist.title, fromPlaylistId: s.playlist.id, fromPlaylistSlug: s.playlist.slug })))
     .filter(p => p?.url && p?.date && p.date >= cutoff && !seen.has(p.url) && seen.add(p.url))
-    .sort((a, b) => new Date(b.date) - new Date(a.date))
-  return cors(json(posts))
-}
+    .sort((a, b) => new Date(b.date) - new Date(a.date) || a.url.localeCompare(b.url))
 
-// POST /api/discover/preview
-const handlePreview = async (req, db) => {
-  const origin = req.headers.get('origin') || ''
-  const host = new URL(req.url).host
-  let originHost; try { originHost = new URL(origin).host } catch { originHost = '' }
-  if (originHost !== host) return json({ error: 'forbidden' }, 403)
-  const body = await parseJsonBody(req)
-  if (!body) return json({ error: 'invalid json' }, 400)
-  const url = body.url?.trim().replace(/\/+$/, '')
-  if (!url) return json({ error: 'url required' }, 400)
-  if (!URL.canParse(url)) return json({ error: 'invalid url' }, 400)
-
-  const parsed = new URL(url)
-  if (parsed.host === host) {
-    const mentionsMatch = parsed.pathname.match(/^\/api\/mentions\/([^/]+)\.xml$/)
-    if (mentionsMatch) {
-      const mentions = await getMentions(db, mentionsMatch[1])
-      const posts = mentions.slice(0, 2).map(m => ({ title: m.fromTitle || m.fromPost, url: m.fromPost, date: m.fromDate, feed: { title: `mentions · ${mentionsMatch[1]}` } }))
-      return cors(json({ title: `mentions · ${mentionsMatch[1]}`, image: null, posts, siteUrl: null }))
-    }
-    const rssMatch = parsed.pathname.match(/^\/api\/discover\/([^/]+)\/rss$/)
-    if (!rssMatch) return cors(json({ error: 'use the follow button on the discover page instead' }, 422))
-    const feed = await getFeed(db, rssMatch[1])
-    if (!feed) return cors(json({ error: 'playlist not found' }, 422))
-    const sourceDatas = await Promise.all((feed.sources || []).map(u => getSourceData(db, u)))
-    const posts = sourceDatas.filter(Boolean).flatMap(s => s.posts || []).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 2).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
-    const image = sourceDatas.filter(Boolean).map(s => s.image).find(Boolean) || null
-    return cors(json({ title: feed.title, image, posts, siteUrl: null }))
-  }
-
-  const result = await fetchSource(url, 20)
-  if (!result.posts) return cors(json({ error: result.statusCode ? `HTTP ${result.statusCode}` : (result.error || 'could not fetch feed') }, 422))
-  if (!result.posts.length) return cors(json({ error: 'no posts found' }, 422))
-  const title = result.posts[0]?.feed?.title || new URL(url).hostname
-  const image = findImage(result.posts)
-  const posts = result.posts.slice(0, 20).map(p => ({ title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content }))
-  return cors(json({ title, image, posts, siteUrl: result.siteUrl || null }))
+  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit')) || 20, 1), 100)
+  const beforeParam = url.searchParams.get('before')
+  let before = null
+  if (beforeParam) { try { before = JSON.parse(atob(beforeParam)) } catch {} }
+  const comesAfter = (p) => p.date !== before.date ? new Date(p.date) < new Date(before.date) : p.url > before.url
+  const startIdx = before ? posts.findIndex(comesAfter) : 0
+  const sliceStart = startIdx === -1 ? posts.length : startIdx
+  const page = posts.slice(sliceStart, sliceStart + limit)
+  const last = page[page.length - 1]
+  const nextCursor = page.length === limit ? btoa(JSON.stringify({ date: last.date, url: last.url })) : null
+  return cors(json({ posts: page, nextCursor }))
 }
 
 // POST /api/discover/submit — public submission, no auth. Rate-limited by IP
@@ -234,11 +188,8 @@ export const handleDiscover = async (req, env, ctx) => {
 
   // Public routes — no auth
   if (method === 'GET' && path === '/api/discover') return handleList(db, url)
-  if (method === 'POST' && path === '/api/discover/feed') return handleFeed(db, req)
-  if (method === 'POST' && path === '/api/discover/feed/opml') return handleFeedOpml(db, req)
-  if (method === 'GET' && path === '/api/discover/all/opml') return handleAllOpml(db)
   if (method === 'GET' && path === '/api/discover/random') return handleRandom(db)
-  if (method === 'GET' && path === '/api/discover/new') return handleNew(db)
+  if (method === 'GET' && path === '/api/discover/new') return handleNew(db, url)
   if (method === 'GET' && path === '/api/discover/tags') {
     return cors(new Response(JSON.stringify(await getTagCloud(db)), {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=300' }
@@ -249,7 +200,6 @@ export const handleDiscover = async (req, env, ctx) => {
     const tag = decodeURIComponent(tagMatch[1]).toLowerCase()
     return cors(json(await getPostsByTag(db, tag)))
   }
-  if (method === 'POST' && path === '/api/discover/preview') return handlePreview(req, db)
   if (method === 'POST' && path === '/api/discover/submit') return handleSubmit(req, db)
   if (method === 'GET' && path === '/api/discover/search') {
     const q = url.searchParams.get('q')?.trim()
@@ -266,7 +216,7 @@ export const handleDiscover = async (req, env, ctx) => {
   }
 
   const opmlMatch = path.match(/^\/api\/discover\/([^/]+)\/opml$/)
-  if (opmlMatch && method === 'GET') return handleOpml(db, opmlMatch[1])
+  if (opmlMatch && method === 'GET') return handleOpml(db, opmlMatch[1], req.url)
 
   const rssMatch = path.match(/^\/api\/discover\/([^/]+)\/rss$/)
   if (rssMatch && method === 'GET') return handlePlaylistRss(db, rssMatch[1], req.url)
@@ -373,6 +323,10 @@ export const handleDiscover = async (req, env, ctx) => {
     ctx.waitUntil(checkDiscoverFeeds(env).catch(err => console.error('admin check failed:', err)))
     return json({ ok: true, triggered: true })
   }
+  if (method === 'POST' && path === '/api/discover/admin/backfill-slugs') {
+    const count = await backfillSlugs(db)
+    return json({ ok: true, updated: count })
+  }
   if (method === 'POST' && path === '/api/discover/admin/normalize-urls') {
     const norm = u => u.replace(/\/+$/, '')
     const feeds = await getFeeds(db) || []
@@ -443,95 +397,5 @@ export const handleMentionsFeed = async (db, sourceId, reqUrl) => {
 
   return new Response(xml, {
     headers: { 'Content-Type': 'application/rss+xml; charset=utf-8', 'Cache-Control': EDGE_CACHE_CONTROL }
-  })
-}
-
-// Personal feed slug — admin GET/PUT + user feed PUT
-export const handleUserFeed = async (req, env) => {
-  const db = env.DISCOVER_DB
-  const path = new URL(req.url).pathname
-  const method = req.method
-
-  const authed = async () => {
-    const token = req.headers?.get('authorization')?.replace('Bearer ', '')
-    const pubkey = await memberByToken(token, db)
-    return isOwnerPubkey(pubkey, env)
-  }
-
-  if (path === '/api/feed/admin/slug') {
-    if (!await authed()) return json({ error: 'unauthorized' }, 401)
-    if (method === 'GET') {
-      const slug = await getUserFeedSlug(db)
-      return json({ slug: slug || null })
-    }
-    if (method === 'PUT') {
-      const body = await parseJsonBody(req)
-      const slug = String(body?.slug || '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 40)
-      if (!slug) return json({ error: 'invalid slug' }, 400)
-      await setUserFeedSlug(db, slug)
-      return json({ ok: true, slug })
-    }
-  }
-
-  const slugMatch = path.match(/^\/api\/feed\/([^/]+)$/)
-  if (slugMatch && method === 'PUT') {
-    if (!await authed()) return json({ error: 'unauthorized' }, 401)
-    const body = await parseJsonBody(req)
-    if (!body) return json({ error: 'invalid json' }, 400)
-    const { ids = [], sources = [], customFeeds = [] } = body
-    await setUserFeed(db, slugMatch[1], { ids, sources, customFeeds })
-    return json({ ok: true })
-  }
-
-  return json({ error: 'not found' }, 404)
-}
-
-// Personal RSS feed — public, built from stored follows
-export const handlePersonalRss = async (req, env, slug) => {
-  const db = env.DISCOVER_DB
-  const data = await getUserFeed(db, slug)
-  if (!data) return new Response('Not found', { status: 404 })
-
-  const { ids = [], sources: sourcesParam = [] } = data
-  const feeds = (await Promise.all(ids.map(id => getFeed(db, id)))).filter(Boolean)
-  const allSourceUrls = [...new Set([...feeds.flatMap(f => f.sources || []), ...sourcesParam])]
-
-  const sourceAll = await resolveSourceAll(db, allSourceUrls)
-
-  const seen = new Set()
-  const posts = allSourceUrls
-    .map(u => sourceAll[makeId(u)])
-    .filter(Boolean)
-    .flatMap(s => s.posts || [])
-    .filter(p => { if (!p.url || seen.has(p.url)) return false; seen.add(p.url); return true })
-    .sort((a, b) => new Date(b.date) - new Date(a.date))
-
-  const base = new URL(req.url).origin
-  const items = posts.map(p => `
-    <item>
-      <title>${xmlAttr(p.title)}</title>
-      <link>${xmlAttr(p.url)}</link>
-      <guid>${xmlAttr(p.url)}</guid>
-      ${p.date ? `<pubDate>${new Date(p.date).toUTCString()}</pubDate>` : ''}
-      ${p.author || p.feed?.title ? `<author>${xmlAttr(p.author || p.feed?.title)}</author>` : ''}
-      ${p.feed?.title ? `<source url="${xmlAttr(p.feed?.url || '')}">${xmlAttr(p.feed.title)}</source>` : ''}
-      ${p.content ? `<description><![CDATA[${p.content}]]></description>` : ''}
-    </item>`).join('')
-
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0">
-  <channel>
-    <title>${xmlAttr(slug)}'s feed · discover</title>
-    <description>Personal RSS feed from discover</description>
-    <link>${base}/feed</link>
-    ${items}
-  </channel>
-</rss>`
-
-  return new Response(xml, {
-    headers: {
-      'Content-Type': 'application/rss+xml; charset=utf-8',
-      'Cache-Control': EDGE_CACHE_CONTROL
-    }
   })
 }

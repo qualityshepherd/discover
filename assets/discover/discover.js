@@ -1,7 +1,7 @@
 import { feedsItemTemplate } from '../src/templates.js'
 import { openModal, initModal, resetModal, setFeedContext, getFeedItem } from './modal.js'
 import { renderTag, renderCard } from './render.js'
-import { toggleFollow, hasFollow, followBtnHtml, rssCopyBtnHtml, handleRssCopy, syncFollowButtons, initFollowHover, hasSourceFollow, toggleSourceFollow, removeSourceFollow, syncSourceFollowButtons, injectSourceFollowButtons, hasFollowedPlaylist, addFollowedPlaylist, removeFollowedPlaylist } from './follows.js'
+import { handleRssCopy, injectSourceRssButtons } from './playlist-actions.js'
 import { injectMentionsLinks } from './mentions.js'
 
 // browse view
@@ -51,6 +51,53 @@ const renderBrowse = (entries, tags) => {
   cards.innerHTML = [...featured, ...rest].map(renderCard).join('')
 }
 
+// null = export everything, an array = export exactly this. only Filters
+// and Tag set this - New/Random don't bother, button's hidden there anyway
+let filteredItems = null
+
+const setFilteredItems = (items) => {
+  filteredItems = items
+  document.getElementById('btn-export').textContent = items === null ? 'export (all)' : `export (${items.length})`
+}
+
+// search only makes sense on Filters. export makes sense anywhere you're
+// looking at a set you actually built - Filters or a single tag - but not
+// New/Random, that's just whatever scroll/shuffle position you landed on
+const showHeader = (search, exportBtn) => {
+  document.getElementById('discover-header').classList.toggle('hidden', !search && !exportBtn)
+  document.getElementById('discover-search').classList.toggle('hidden', !search)
+  document.getElementById('btn-export').classList.toggle('hidden', !exportBtn)
+}
+
+const feedDomain = (url) => {
+  try { return new URL(url).hostname } catch { return '' }
+}
+
+const postsToOpmlItems = (posts) => {
+  const seen = new Set()
+  const items = []
+  for (const p of posts) {
+    const url = p.feed?.url
+    if (!url || seen.has(url)) continue
+    seen.add(url)
+    items.push({ title: p.feed?.title || feedDomain(url), url })
+  }
+  return items
+}
+
+const escXml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+const downloadOpml = (items, filename) => {
+  const outlines = items.map(({ title, url }) => `    <outline type="rss" text="${escXml(title)}" xmlUrl="${escXml(url)}"/>`).join('\n')
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<opml version="1.0">\n  <head><title>discover</title></head>\n  <body>\n${outlines}\n  </body>\n</opml>`
+  const blob = new Blob([xml], { type: 'text/x-opml' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
 const filterAndRender = async () => {
   closeDrawer()
   const q = document.getElementById('discover-search').value.trim()
@@ -71,19 +118,21 @@ const filterAndRender = async () => {
       )
     }
     renderTagCloud(allTags)
-    if (!filtered.length) { cards.innerHTML = '<p class="muted">no results.</p>'; return }
+    if (!filtered.length) { cards.innerHTML = '<p class="muted">no results.</p>'; setFilteredItems([]); return }
     const seenUrls = new Set()
     const deduped = filtered.filter(s => !seenUrls.has(s.url) && seenUrls.add(s.url))
     cards.innerHTML = deduped.map(feedsItemTemplate).join('')
-    injectSourceFollowButtons(cards)
+    injectSourceRssButtons(cards)
     injectMentionsLinks(cards, mentionCounts)
     setFeedContext(filtered)
     initModal()
+    setFilteredItems(postsToOpmlItems(deduped))
     return
   }
 
   renderTagCloud(allTags)
   cards.innerHTML = allEntries.length ? allEntries.map(renderCard).join('') : '<p class="muted">no feeds found.</p>'
+  setFilteredItems(null)
 }
 
 const syncUrl = () => {
@@ -92,12 +141,14 @@ const syncUrl = () => {
   const q = document.getElementById('discover-search').value.trim()
   if (q) params.set('q', q)
   const qs = params.toString()
-  history.replaceState({}, '', qs ? `/?${qs}` : '/')
+  history.replaceState({}, '', qs ? `/filters?${qs}` : '/filters')
 }
 
 const loadBrowse = async () => {
   window.scrollTo(0, 0)
   showView('browse')
+  showHeader(true, true)
+  setFilteredItems(null)
 
   const params = new URLSearchParams(location.search)
   const tagParam = params.get('tag')
@@ -144,16 +195,11 @@ const openDrawer = async (id) => {
   if (!card) return
   card.classList.add('expanded')
 
-  const entrySources = allEntries.find(e => e.id === id)?.sources || []
-
   const drawer = document.createElement('div')
   drawer.className = 'discover-drawer'
   drawer.dataset.id = id
   drawer.innerHTML = `
     <div class="discover-drawer-actions">
-      ${followBtnHtml(id, entrySources)}
-      ${rssCopyBtnHtml(id)}
-      <button class="btn btn-sm btn-link-copy" data-link-id="${id}" title="Copy playlist link">link</button>
       <button class="discover-drawer-close btn btn-sm" aria-label="Close">✕</button>
     </div>
     <div class="discover-drawer-feed"><p class="muted">loading…</p></div>
@@ -171,7 +217,7 @@ const openDrawer = async (id) => {
 
   setFeedContext(posts)
   feedEl.innerHTML = posts.map(feedsItemTemplate).join('')
-  injectSourceFollowButtons(feedEl)
+  injectSourceRssButtons(feedEl)
   injectMentionsLinks(feedEl, mentionCounts)
   initModal()
 
@@ -186,13 +232,13 @@ const loadPlaylist = async (id) => {
   const el = document.getElementById('playlist-feed')
   el.innerHTML = '<p class="muted">loading…</p>'
 
-  let entry = allEntries.find(e => e.id === id)
+  let entry = allEntries.find(e => e.id === id || e.slug === id)
   if (!entry) {
     const data = await fetch('/api/discover').then(r => r.json())
     allEntries = data.feeds || []
     mentionCounts = data.mentionCounts || mentionCounts
     allTags = data.tags || []
-    entry = allEntries.find(e => e.id === id)
+    entry = allEntries.find(e => e.id === id || e.slug === id)
   }
 
   if (entry) {
@@ -200,15 +246,8 @@ const loadPlaylist = async (id) => {
     document.getElementById('playlist-title').textContent = entry.title
     document.getElementById('playlist-description').textContent = entry.description || ''
     document.getElementById('playlist-tags').innerHTML = (entry.tags || []).map(t => renderTag(t)).join('')
-    const rssBtn = document.getElementById('btn-rss-playlist')
-    rssBtn.href = `/api/discover/${id}/rss`
-    const followBtn = document.getElementById('btn-follow-playlist')
-    const sources = entry.sources || []
-    const followed = sources.length ? hasFollowedPlaylist(id) : hasFollow(id)
-    followBtn.className = `btn btn-sm btn-follow${followed ? ' following' : ''}`
-    followBtn.dataset.followId = id
-    if (sources.length) followBtn.dataset.sources = sources.join('|')
-    followBtn.textContent = followed ? 'following' : '+ follow'
+    document.getElementById('btn-rss-playlist').href = `/api/discover/${id}/rss`
+    document.getElementById('btn-opml-playlist').href = `/api/discover/${id}/opml`
   }
 
   const res = await fetch(`/api/discover/${id}`)
@@ -218,7 +257,7 @@ const loadPlaylist = async (id) => {
 
   setFeedContext(posts)
   el.innerHTML = posts.map(feedsItemTemplate).join('')
-  injectSourceFollowButtons(el)
+  injectSourceRssButtons(el)
   injectMentionsLinks(el, mentionCounts)
   initModal()
 }
@@ -231,49 +270,93 @@ const showView = (name) => {
 }
 
 const ensureMentionCounts = async () => {
-  if (Object.keys(mentionCounts).length) return
+  if (Object.keys(mentionCounts).length && allTags.length) return
   const data = await fetch('/api/discover').then(r => r.json()).catch(() => ({}))
-  mentionCounts = data.mentionCounts || {}
+  mentionCounts = data.mentionCounts || mentionCounts
+  if (!allTags.length) allTags = data.tags || []
 }
+
+// paint the last page from sessionStorage instantly, fetch fresh behind it -
+// skips the loading flash for anyone who's already been here this session.
+// only caching page one, scrolling further always hits the network
+const NEW_CACHE_KEY = 'discover_new_cache'
+const readNewCache = () => {
+  try { return JSON.parse(sessionStorage.getItem(NEW_CACHE_KEY) || 'null') } catch { return null }
+}
+const writeNewCache = (posts) => {
+  try { sessionStorage.setItem(NEW_CACHE_KEY, JSON.stringify(posts)) } catch {}
+}
+
+const NEW_PAGE = 20
 
 const loadNew = async () => {
   fetch('/api/hit?path=/new', { method: 'POST' }).catch(() => {})
   showView('browse')
+  showHeader(false, false)
   const cards = document.getElementById('discover-cards')
-  cards.innerHTML = '<p class="muted">loading…</p>'
   document.getElementById('tag-cloud').innerHTML = ''
-  await ensureMentionCounts()
-  const posts = await fetch('/api/discover/new').then(r => r.json()).catch(() => [])
-  if (!posts.length) { cards.innerHTML = '<p class="muted">no new posts yet.</p>'; return }
-  const withLabel = posts
-  setFeedContext(withLabel)
-  initModal()
 
-  let rendered = 0
-  const PAGE = 20
+  let loadedPosts = []
+  let cursor = null
+  let done = false
+  let fetching = false
 
-  cards.innerHTML = ''
-  // sentinel sits at the bottom; items are inserted before it so it stays at
-  // the end. IntersectionObserver fires when it enters the viewport to load the next batch.
   const sentinel = document.createElement('div')
-  cards.appendChild(sentinel)
 
-  const renderMore = () => {
-    const batch = withLabel.slice(rendered, rendered + PAGE)
-    if (!batch.length) return
+  const appendPage = (posts) => {
+    loadedPosts = loadedPosts.concat(posts)
+    setFeedContext(loadedPosts)
+    initModal()
     const frag = document.createElement('div')
-    frag.innerHTML = batch.map(feedsItemTemplate).join('')
+    frag.innerHTML = posts.map(feedsItemTemplate).join('')
     cards.insertBefore(frag, sentinel)
-    injectSourceFollowButtons(frag)
+    injectSourceRssButtons(frag)
     injectMentionsLinks(frag, mentionCounts)
-    rendered += batch.length
   }
 
-  renderMore()
+  const cached = readNewCache()
+  if (cached?.length) {
+    await ensureMentionCounts()
+    cards.innerHTML = ''
+    cards.appendChild(sentinel)
+    appendPage(cached)
+    // resume after the cached page, not from the start - otherwise we'd
+    // refetch and duplicate what's already painted
+    const last = cached[cached.length - 1]
+    cursor = btoa(JSON.stringify({ date: last.date, url: last.url }))
+  } else {
+    cards.innerHTML = '<p class="muted">loading…</p>'
+    await ensureMentionCounts()
+  }
+
+  const fetchPage = async () => {
+    if (fetching || done) return
+    fetching = true
+    const params = new URLSearchParams({ limit: NEW_PAGE })
+    if (cursor) params.set('before', cursor)
+    const data = await fetch(`/api/discover/new?${params}`).then(r => r.json()).catch(() => ({ posts: [], nextCursor: null }))
+    fetching = false
+    cursor = data.nextCursor
+    if (!data.nextCursor) done = true
+
+    const isFirstPage = loadedPosts.length === 0 && !cached?.length
+    if (!data.posts.length) {
+      if (isFirstPage) cards.innerHTML = '<p class="muted">no new posts yet.</p>'
+      return
+    }
+    // only cache page one - not the replay (nothing changed), not later
+    // pages (that'd just grow forever)
+    if (!cached?.length && loadedPosts.length === 0) writeNewCache(data.posts)
+    if (isFirstPage) cards.innerHTML = ''
+    if (!cards.contains(sentinel)) cards.appendChild(sentinel)
+    appendPage(data.posts)
+  }
+
+  await fetchPage()
+
   const observer = new IntersectionObserver(entries => {
-    if (!entries[0].isIntersecting) return
-    if (rendered >= withLabel.length) { observer.disconnect(); sentinel.remove(); return }
-    renderMore()
+    if (!entries[0].isIntersecting || done) return
+    fetchPage()
   }, { rootMargin: '200px' })
   observer.observe(sentinel)
 }
@@ -281,6 +364,7 @@ const loadNew = async () => {
 const loadRandom = async () => {
   fetch('/api/hit?path=/random', { method: 'POST' }).catch(() => {})
   showView('browse')
+  showHeader(false, false)
   const cards = document.getElementById('discover-cards')
   cards.innerHTML = '<p class="muted">loading…</p>'
   document.getElementById('tag-cloud').innerHTML = ''
@@ -288,7 +372,7 @@ const loadRandom = async () => {
   const posts = await fetch('/api/discover/random').then(r => r.json()).catch(() => [])
   const withPlaylist = posts
   cards.innerHTML = withPlaylist.length ? withPlaylist.map(feedsItemTemplate).join('') : '<p class="muted">no posts found.</p>'
-  if (withPlaylist.length) { injectSourceFollowButtons(cards); injectMentionsLinks(cards, mentionCounts) }
+  if (withPlaylist.length) { injectSourceRssButtons(cards); injectMentionsLinks(cards, mentionCounts) }
   setFeedContext(withPlaylist)
   initModal()
 }
@@ -296,17 +380,20 @@ const loadRandom = async () => {
 const loadTag = async (tag) => {
   fetch(`/api/hit?path=/tag/${encodeURIComponent(tag)}`, { method: 'POST' }).catch(() => {})
   showView('browse')
+  showHeader(false, true)
   const cards = document.getElementById('discover-cards')
   cards.innerHTML = '<p class="muted">loading…</p>'
-  document.getElementById('tag-cloud').innerHTML = ''
-  await ensureMentionCounts()
+  await Promise.all([ensureMentionCounts(), ensurePostTags()])
+  activeTags = new Set([tag])
+  renderTagCloud(postTags.length ? postTags : allTags)
   const posts = await fetch(`/api/discover/tag/${encodeURIComponent(tag)}`).then(r => r.json()).catch(() => [])
-  if (!posts.length) { cards.innerHTML = `<p class="muted">no posts tagged #${tag} yet.</p>`; return }
+  if (!posts.length) { cards.innerHTML = `<p class="muted">no posts tagged #${tag} yet.</p>`; setFilteredItems([]); return }
   setFeedContext(posts)
   initModal()
   cards.innerHTML = posts.map(feedsItemTemplate).join('')
-  injectSourceFollowButtons(cards)
+  injectSourceRssButtons(cards)
   injectMentionsLinks(cards, mentionCounts)
+  setFilteredItems(postsToOpmlItems(posts))
 }
 
 const route = () => {
@@ -316,12 +403,12 @@ const route = () => {
     loadPlaylist(parts[1])
   } else if (parts.length === 2 && parts[0] === 'tag') {
     loadTag(decodeURIComponent(parts[1]))
-  } else if (path === '/new') {
-    loadNew()
+  } else if (path === '/filters') {
+    loadBrowse()
   } else if (path === '/random') {
     loadRandom()
   } else {
-    loadBrowse()
+    loadNew()
   }
 }
 
@@ -333,16 +420,11 @@ document.getElementById('discover-search').addEventListener('input', () => {
   searchDebounce = setTimeout(filterAndRender, 300)
 })
 
-document.getElementById('btn-random').addEventListener('click', (e) => {
+document.getElementById('btn-export').addEventListener('click', (e) => {
   e.preventDefault()
-  history.pushState({}, '', '/random')
-  loadRandom()
-})
-
-document.getElementById('btn-new').addEventListener('click', (e) => {
-  e.preventDefault()
-  history.pushState({}, '', '/new')
-  loadNew()
+  if (filteredItems === null) { location.href = '/api/discover/all/opml'; return }
+  if (!filteredItems.length) return
+  downloadOpml(filteredItems, 'discover.opml')
 })
 
 document.getElementById('tag-cloud').addEventListener('click', e => {
@@ -369,33 +451,6 @@ document.getElementById('discover-cards').addEventListener('click', e => {
     const post = feedOpen.closest('.feed-post')
     const item = getFeedItem(post?.dataset.url)
     if (item) openModal(item)
-    return
-  }
-
-  const followBtn = e.target.closest('.btn-follow')
-  if (followBtn && followBtn.id !== 'btn-follow-playlist') {
-    if (followBtn.dataset.sources) {
-      const id = followBtn.dataset.followId
-      const sources = followBtn.dataset.sources.split('|').filter(Boolean)
-      if (hasFollowedPlaylist(id)) {
-        removeFollowedPlaylist(id)
-        sources.forEach(url => removeSourceFollow(url))
-      } else {
-        addFollowedPlaylist(id)
-        sources.forEach(url => { if (!hasSourceFollow(url)) toggleSourceFollow(url) })
-      }
-    } else {
-      toggleFollow(followBtn.dataset.followId)
-    }
-    syncFollowButtons()
-    syncSourceFollowButtons()
-    return
-  }
-
-  const sourceFollowBtn = e.target.closest('.btn-source-follow')
-  if (sourceFollowBtn) {
-    toggleSourceFollow(sourceFollowBtn.dataset.sourceUrl)
-    syncSourceFollowButtons()
     return
   }
 
@@ -440,27 +495,6 @@ document.getElementById('discover-cards').addEventListener('click', e => {
   }
 })
 
-document.getElementById('btn-follow-playlist').addEventListener('click', (e) => {
-  if (!playlistEntry) return
-  const btn = e.currentTarget
-  const id = playlistEntry.id
-  if (btn.dataset.sources) {
-    const sources = btn.dataset.sources.split('|').filter(Boolean)
-    if (hasFollowedPlaylist(id)) {
-      removeFollowedPlaylist(id)
-      sources.forEach(url => removeSourceFollow(url))
-    } else {
-      addFollowedPlaylist(id)
-      sources.forEach(url => { if (!hasSourceFollow(url)) toggleSourceFollow(url) })
-    }
-    syncFollowButtons()
-    syncSourceFollowButtons()
-  } else {
-    toggleFollow(id)
-    syncFollowButtons()
-  }
-})
-
 document.getElementById('btn-rss-playlist').addEventListener('click', (e) => {
   e.preventDefault()
   handleRssCopy(e.currentTarget, e.currentTarget.dataset.rssId || playlistEntry?.id)
@@ -470,7 +504,7 @@ document.getElementById('playlist-tags').addEventListener('click', e => {
   const btn = e.target.closest('.discover-tag')
   if (!btn) return
   const tag = btn.dataset.tag
-  history.pushState({}, '', `/?tag=${encodeURIComponent(tag)}`)
+  history.pushState({}, '', `/filters?tag=${encodeURIComponent(tag)}`)
   loadBrowse()
 })
 
@@ -498,5 +532,4 @@ updateThemeBtn()
 
 // init
 
-initFollowHover()
 route()

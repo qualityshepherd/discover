@@ -1,7 +1,11 @@
+export const slugify = (title) =>
+  (title || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'playlist'
+
 const rowToFeed = (row, sources = []) => {
   if (!row) return null
   return {
     id: row.id,
+    slug: row.slug || null,
     title: row.title,
     description: row.description || '',
     type: row.type || undefined,
@@ -24,11 +28,39 @@ const rowToFeed = (row, sources = []) => {
   }
 }
 
+// id can be the real hex id or a slug - old links gotta keep working forever
 export const getFeed = async (db, id) => {
-  const row = await db.prepare('SELECT * FROM feeds WHERE id = ?').bind(id).first()
+  const row = await db.prepare('SELECT * FROM feeds WHERE id = ? OR slug = ?').bind(id, id).first()
   if (!row) return null
-  const srcRows = await db.prepare('SELECT source_url FROM feed_sources WHERE feed_id = ? ORDER BY added_at').bind(id).all()
+  const srcRows = await db.prepare('SELECT source_url FROM feed_sources WHERE feed_id = ? ORDER BY added_at').bind(row.id).all()
   return rowToFeed(row, srcRows.results.map(r => r.source_url))
+}
+
+// unique slug from a title, -2/-3/... on collision. excludeId so editing a
+// playlist doesn't collide with its own slug
+export const generateUniqueSlug = async (db, title, excludeId = null) => {
+  const base = slugify(title)
+  let slug = base
+  let n = 2
+  while (true) {
+    const row = excludeId
+      ? await db.prepare('SELECT 1 FROM feeds WHERE slug = ? AND id != ?').bind(slug, excludeId).first()
+      : await db.prepare('SELECT 1 FROM feeds WHERE slug = ?').bind(slug).first()
+    if (!row) return slug
+    slug = `${base}-${n++}`
+  }
+}
+
+// backfill for playlists that predate slugs - only fills NULLs, safe to rerun
+export const backfillSlugs = async (db) => {
+  const { results } = await db.prepare('SELECT id, title FROM feeds WHERE slug IS NULL').all()
+  let count = 0
+  for (const { id, title } of results) {
+    const slug = await generateUniqueSlug(db, title, id)
+    await db.prepare('UPDATE feeds SET slug = ? WHERE id = ?').bind(slug, id).run()
+    count++
+  }
+  return count
 }
 
 export const getFeeds = async (db) => {
@@ -43,20 +75,24 @@ export const getFeeds = async (db) => {
   return feedRows.results.map(row => rowToFeed(row, byFeed[row.id] || []))
 }
 
-export const saveFeed = async (db, feed) => {
+// syncChildren: false updates only the feeds row. Use it when title, description, tags
+// and sources are unchanged (the cron), since rewriting feed_sources and the FTS index
+// costs several billed rows per source on every run.
+export const saveFeed = async (db, feed, { syncChildren = true } = {}) => {
   const {
-    id, title, description, type, tags, coverImage, ownerPubkey, featured, imports,
+    id, slug, title, description, type, tags, coverImage, ownerPubkey, featured, imports,
     active, updateFrequency, lastChecked, lastUpdated, previewPosts, failStreak,
     curatorPubkey, curatorName, curatorUrl, addedAt, sources = []
   } = feed
 
   await db.prepare(`
     INSERT INTO feeds
-      (id, title, description, type, tags, cover_image, owner_pubkey, featured, imports,
+      (id, slug, title, description, type, tags, cover_image, owner_pubkey, featured, imports,
        active, update_frequency, last_checked, last_updated, preview_posts, fail_streak,
        curator_pubkey, curator_name, curator_url, added_at, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
+      slug=excluded.slug,
       title=excluded.title, description=excluded.description, type=excluded.type,
       tags=excluded.tags, cover_image=excluded.cover_image,
       owner_pubkey=excluded.owner_pubkey, featured=excluded.featured, imports=excluded.imports,
@@ -66,7 +102,7 @@ export const saveFeed = async (db, feed) => {
       curator_pubkey=excluded.curator_pubkey, curator_name=excluded.curator_name,
       curator_url=excluded.curator_url, updated_at=datetime('now')
   `).bind(
-    id, title, description || null, type || null,
+    id, slug || null, title, description || null, type || null,
     JSON.stringify(tags || []),
     coverImage || null,
     ownerPubkey || null,
@@ -76,6 +112,8 @@ export const saveFeed = async (db, feed) => {
     failStreak || 0, curatorPubkey || null, curatorName || null, curatorUrl || null,
     addedAt || new Date().toISOString()
   ).run()
+
+  if (!syncChildren) return
 
   // Replace sources + sync FTS index
   const stmts = [
@@ -97,36 +135,6 @@ export const removeFromIndex = async (db, id) => {
     db.prepare('DELETE FROM feeds WHERE id = ?').bind(id),
     db.prepare('DELETE FROM feeds_fts WHERE feed_id = ?').bind(id)
   ])
-}
-
-// User feed
-
-export const getUserFeedSlug = async (db) => {
-  const row = await db.prepare("SELECT value FROM settings WHERE key='user-feed:slug'").first()
-  return row?.value || null
-}
-
-export const setUserFeedSlug = async (db, slug) => {
-  await db.prepare(
-    "INSERT INTO settings (key,value) VALUES ('user-feed:slug',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"
-  ).bind(slug).run()
-}
-
-export const getUserFeed = async (db, slug) => {
-  const row = await db.prepare('SELECT ids, sources, custom_feeds FROM user_feed WHERE slug=?').bind(slug).first()
-  if (!row) return null
-  return {
-    ids: JSON.parse(row.ids || '[]'),
-    sources: JSON.parse(row.sources || '[]'),
-    customFeeds: JSON.parse(row.custom_feeds || '[]')
-  }
-}
-
-export const setUserFeed = async (db, slug, data) => {
-  await db.prepare(`
-    INSERT INTO user_feed (slug, ids, sources, custom_feeds) VALUES (?,?,?,?)
-    ON CONFLICT(slug) DO UPDATE SET ids=excluded.ids, sources=excluded.sources, custom_feeds=excluded.custom_feeds
-  `).bind(slug, JSON.stringify(data.ids || []), JSON.stringify(data.sources || []), JSON.stringify(data.customFeeds || [])).run()
 }
 
 // Paginated + filtered feed list using keyset pagination.
@@ -200,7 +208,7 @@ export const getTagCounts = async (db) => {
 // Only includes sources referenced by at least one feed. Deduped by source URL.
 export const getNewestSourcePosts = async (db) => {
   const rows = await db.prepare(`
-    SELECT s.url, s.posts, fs.feed_id, f.title AS feed_title, f.id AS playlist_id
+    SELECT s.url, s.posts, fs.feed_id, f.title AS feed_title, f.id AS playlist_id, f.slug AS playlist_slug
     FROM sources s
     JOIN feed_sources fs ON s.url = fs.source_url
     JOIN feeds f ON fs.feed_id = f.id
@@ -213,14 +221,14 @@ export const getNewestSourcePosts = async (db) => {
     .map(r => ({
       url: r.url,
       posts: JSON.parse(r.posts || '[]'),
-      playlist: { title: r.feed_title, id: r.playlist_id }
+      playlist: { title: r.feed_title, id: r.playlist_id, slug: r.playlist_slug || null }
     }))
 }
 
 // All sources with posts — caller shuffles the expanded post corpus
 export const getRandomSourcePosts = async (db) => {
   const rows = await db.prepare(`
-    SELECT s.posts, f.title AS feed_title, f.id AS feed_id
+    SELECT s.posts, f.title AS feed_title, f.id AS feed_id, f.slug AS feed_slug
     FROM sources s
     JOIN (SELECT source_url, MIN(feed_id) AS feed_id FROM feed_sources GROUP BY source_url) fs ON s.url = fs.source_url
     JOIN feeds f ON f.id = fs.feed_id
@@ -228,7 +236,7 @@ export const getRandomSourcePosts = async (db) => {
   `).all()
   return rows.results.map(r => ({
     posts: JSON.parse(r.posts || '[]'),
-    playlist: { title: r.feed_title, id: r.feed_id }
+    playlist: { title: r.feed_title, id: r.feed_id, slug: r.feed_slug || null }
   }))
 }
 

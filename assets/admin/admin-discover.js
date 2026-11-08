@@ -17,7 +17,7 @@ const dcEntryRow = (e) => {
       ${dcFreqBadge(e)}
       <span class="dc-badge${sourceCount === 0 ? ' dc-badge-danger' : ''}">${sourceCount} feeds</span>
       <div class="post-row-actions">
-        <a href="/discover/${escHtml(e.id)}" target="_blank" rel="noopener" class="icon-btn" aria-label="View">${ICON_EXTERNAL}</a>
+        <a href="/discover/${escHtml(e.slug || e.id)}" target="_blank" rel="noopener" class="icon-btn" aria-label="View">${ICON_EXTERNAL}</a>
         <button class="icon-btn" data-action="refresh" aria-label="Refresh playlist">${ICON_REFRESH}</button>
         <button class="icon-btn${e.featured ? ' active' : ''}" data-action="feature" aria-label="${e.featured ? 'unfeature' : 'feature'}">★</button>
         <button class="icon-btn danger" data-action="delete" aria-label="Delete">${ICON_TRASH}</button>
@@ -41,7 +41,10 @@ const dcEntryEdit = (e) => {
         <div class="field" style="flex:2"><input type="text" class="dc-edit-title" value="${escHtml(e.title)}" placeholder="title"></div>
         <div class="field" style="flex:2"><input type="text" class="dc-edit-tags" value="${escHtml((e.tags || []).join(', '))}" placeholder="tags, comma separated"></div>
       </div>
-      <div class="field"><input type="text" class="dc-edit-description" value="${escHtml(e.description || '')}" placeholder="description"></div>
+      <div class="row field">
+        <div class="field" style="flex:2"><input type="text" class="dc-edit-description" value="${escHtml(e.description || '')}" placeholder="description"></div>
+        <div class="field" style="flex:1"><input type="text" class="dc-edit-slug" value="${escHtml(e.slug || '')}" placeholder="slug (e.g. digital-archaeology)"></div>
+      </div>
       <div class="dc-playlist-sources">${sourcesHtml}</div>
       <div class="flex gap-3 items-center" style="margin-top:var(--s3)">
         <label class="flex items-center gap-2" style="font-size:var(--text-sm);cursor:pointer">
@@ -294,6 +297,7 @@ function bindDcEntryRows (el) {
           title: wrap.querySelector('.dc-edit-title').value.trim(),
           description: wrap.querySelector('.dc-edit-description').value.trim(),
           tags: wrap.querySelector('.dc-edit-tags').value.split(',').map(t => t.trim()).filter(Boolean),
+          slug: wrap.querySelector('.dc-edit-slug').value.trim(),
           featured: wrap.querySelector('.dc-edit-featured').checked
         }
         const res = await api('PATCH', `/api/discover/admin/${id}`, body)

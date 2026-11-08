@@ -35,9 +35,9 @@ export const feedsItemTemplate = (item) => {
 
   const sourceName = `${item.author ? `${item.author} · ` : ''}${item.feed?.title || domain}`
   const playlistBadge = item.playlists?.length
-    ? item.playlists.map(p => `<a class="feed-playlist-badge" href="/discover/${p.id}">${p.title}</a>`).join('')
+    ? item.playlists.map(p => `<a class="feed-playlist-badge" href="/discover/${p.slug || p.id}">${p.title}</a>`).join('')
     : (item.fromPlaylist && item.fromPlaylistId
-        ? `<a class="feed-playlist-badge" href="/discover/${item.fromPlaylistId}">in: ${item.fromPlaylist}</a>`
+        ? `<a class="feed-playlist-badge" href="/discover/${item.fromPlaylistSlug || item.fromPlaylistId}">in: ${item.fromPlaylist}</a>`
         : '')
 
   return `

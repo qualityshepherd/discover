@@ -56,39 +56,10 @@ async function checkCronHealth () {
   }
 }
 
-const showSlugLink = (slug) => {
-  const el = $('slug-link')
-  if (!slug) { el.classList.add('hidden'); return }
-  const url = `${location.origin}/feed/${slug}.xml`
-  el.innerHTML = `rss: <a href="${url}" target="_blank" rel="noopener">${url}</a>`
-  el.classList.remove('hidden')
-}
-
 async function showSettings () {
   if (!getToken()) return showLogin()
   showView('view-settings'); showNav()
-  const data = await api('GET', '/api/feed/admin/slug')
-  if (data?.slug) {
-    $('slug-input').value = data.slug
-    showSlugLink(data.slug)
-  }
 }
-
-$('btn-slug-save').addEventListener('click', async () => {
-  const raw = $('slug-input').value.trim()
-  const slug = raw.toLowerCase().replace(/[^a-z0-9-]/g, '')
-  if (!slug) { $('slug-status').textContent = 'invalid slug'; return }
-  const res = await api('PUT', '/api/feed/admin/slug', { slug })
-  if (res?.ok) {
-    $('slug-input').value = res.slug
-    localStorage.setItem('discover_slug', res.slug)
-    $('slug-status').textContent = 'saved'
-    showSlugLink(res.slug)
-    setTimeout(() => { $('slug-status').textContent = '' }, 2000)
-  } else {
-    $('slug-status').textContent = res?.error || 'save failed'
-  }
-})
 
 const login = async (passphrase) => {
   const { privateKey, pubkey } = await deriveKeypair(passphrase, location.hostname)

@@ -12,8 +12,7 @@ const CACHEABLE = [
   /^\/api\/discover\/tag\/[^/]+$/,
   /^\/api\/discover\/search$/,
   /^\/api\/discover\/[^/]+\/rss$/,
-  /^\/api\/mentions\/[^/]+\.xml$/,
-  /^\/feed\/[^/]+\.xml$/
+  /^\/api\/mentions\/[^/]+\.xml$/
 ]
 
 export const isEdgeCacheable = (req) => {

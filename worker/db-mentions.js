@@ -26,14 +26,43 @@ export const getMentionDomainsForSources = async (db, sourceUrls) => {
   return results
 }
 
+// Diffs against the stored rows for this domain instead of delete-and-reinsert.
+// (from_post, to_domain) is UNIQUE, so from_post identifies a mention. Unchanged
+// rows are not touched, which also keeps their original found_at.
 export const saveMentions = async (db, domain, mentions) => {
-  const stmts = [db.prepare('DELETE FROM mentions WHERE to_domain=?').bind(domain)]
-  for (const m of mentions) {
+  const stored = await db.prepare(
+    'SELECT from_source, from_post, from_title, from_date, from_content, to_url FROM mentions WHERE to_domain=?'
+  ).bind(domain).all()
+
+  const wanted = new Map(mentions.map(m => [m.fromPost, m]))
+  const stmts = []
+  const present = new Set()
+  for (const row of stored.results) {
+    const m = wanted.get(row.from_post)
+    if (!m) {
+      stmts.push(db.prepare('DELETE FROM mentions WHERE to_domain=? AND from_post=?').bind(domain, row.from_post))
+      continue
+    }
+    present.add(row.from_post)
+    const changed =
+      (row.from_source || '') !== (m.fromSource || '') ||
+      (row.from_title || '') !== (m.fromTitle || '') ||
+      (row.from_date || null) !== (m.fromDate || null) ||
+      (row.from_content || '') !== (m.fromContent || '') ||
+      (row.to_url || '') !== (m.toUrl || '')
+    if (changed) {
+      stmts.push(db.prepare(
+        'UPDATE mentions SET from_source=?, from_title=?, from_date=?, from_content=?, to_url=? WHERE to_domain=? AND from_post=?'
+      ).bind(m.fromSource, m.fromTitle || null, m.fromDate || null, m.fromContent || null, m.toUrl || null, domain, m.fromPost))
+    }
+  }
+  for (const [fromPost, m] of wanted) {
+    if (present.has(fromPost)) continue
     stmts.push(db.prepare(
       'INSERT INTO mentions (from_source, from_post, from_title, from_date, from_content, to_domain, to_url) VALUES (?,?,?,?,?,?,?)'
     ).bind(m.fromSource, m.fromPost, m.fromTitle || null, m.fromDate || null, m.fromContent || null, domain, m.toUrl || null))
   }
-  await db.batch(stmts)
+  if (stmts.length) await db.batch(stmts)
 }
 
 // { [domain]: count } — live from mentions table, never stale

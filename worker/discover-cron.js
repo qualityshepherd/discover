@@ -177,9 +177,15 @@ export const buildLinkGraph = async (db, sourceUrls, freshData) => {
 
   await Promise.all([...byTarget.entries()].map(async ([domain, newItems]) => {
     const existing = await getMentions(db, domain)
-    const newKeys = new Set(newItems.map(m => `${m.fromSource}:${m.fromPost}`))
+    const existingByKey = new Map(existing.map(m => [`${m.fromSource}:${m.fromPost}`, m]))
+    // A mention seen again keeps its original foundAt; only genuinely new ones get "now"
+    const items = newItems.map(m => {
+      const prev = existingByKey.get(`${m.fromSource}:${m.fromPost}`)
+      return prev ? { ...m, foundAt: prev.foundAt } : m
+    })
+    const newKeys = new Set(items.map(m => `${m.fromSource}:${m.fromPost}`))
     const kept = existing.filter(m => !newKeys.has(`${m.fromSource}:${m.fromPost}`))
-    const updated = [...kept, ...newItems]
+    const updated = [...kept, ...items]
       .sort((a, b) => new Date(b.foundAt) - new Date(a.foundAt))
       .slice(0, 100)
     await saveMentions(db, domain, updated)
@@ -342,7 +348,8 @@ export const checkDiscoverFeeds = async (env) => {
     feed.lastUpdated = new Date(now).toISOString()
     changedFeeds.push(feed)
   }
-  if (changedFeeds.length) await Promise.all(changedFeeds.map(f => saveFeed(db, f)))
+  // The cron only changes preview posts, cover image and frequency, so leave feed_sources and the FTS index alone
+  if (changedFeeds.length) await Promise.all(changedFeeds.map(f => saveFeed(db, f, { syncChildren: false })))
 
   const allSourceUrls = await getAllSourceUrls(db)
   await buildLinkGraph(db, allSourceUrls, freshData).catch(err => console.error('buildLinkGraph failed:', err))

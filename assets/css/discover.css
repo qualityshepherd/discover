@@ -31,6 +31,12 @@
   border-color: var(--color-accent);
 }
 
+/* pin export to the right - on Tag view search is hidden so it's the only
+   child left, and without this it just collapses to the left */
+#btn-export {
+  margin-left: auto;
+}
+
 
 /* tag cloud */
 
@@ -250,18 +256,6 @@
   display: flex;
   gap: var(--space-2);
   margin-top: var(--space-3);
-}
-
-/* follow button */
-
-.btn-follow.following {
-  color: var(--color-accent);
-  border-color: var(--color-accent);
-}
-
-.btn-follow.following:hover {
-  color: var(--color-danger, #c05050);
-  border-color: var(--color-danger, #c05050);
 }
 
 /* inline drawer */

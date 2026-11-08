@@ -17,7 +17,7 @@ export const searchSources = async (db, { q, tag } = {}) => {
 
   const rows = await db.prepare(`
     SELECT s.url, s.title, s.posts,
-           json_group_array(json_object('id', f.id, 'title', f.title, 'tags', json(COALESCE(f.tags, '[]')))) AS playlists
+           json_group_array(json_object('id', f.id, 'slug', f.slug, 'title', f.title, 'tags', json(COALESCE(f.tags, '[]')))) AS playlists
     FROM sources s
     JOIN feed_sources fs ON s.url = fs.source_url
     JOIN feeds f ON f.id = fs.feed_id
@@ -44,17 +44,38 @@ export const searchSources = async (db, { q, tag } = {}) => {
 
 // Post tags
 
+// Writes only the difference between the stored tags for a source and the fresh
+// fetch. D1 bills every row touched (including index entries), and most fetches
+// change nothing, so delete-everything-and-reinsert burned the daily write budget.
 export const savePostTags = async (db, sourceUrl, posts) => {
-  const stmts = [db.prepare('DELETE FROM post_tags WHERE source_url = ?').bind(sourceUrl)]
+  const wanted = new Map()
   for (const post of posts) {
     if (!post.url || !post.tags?.length) continue
-    for (const tag of post.tags) {
-      stmts.push(db.prepare(
-        'INSERT OR IGNORE INTO post_tags (source_url, post_url, tag, post_date) VALUES (?,?,?,?)'
-      ).bind(sourceUrl, post.url, tag, post.date || null))
+    for (const tag of post.tags) wanted.set(`${post.url}\n${tag}`, { postUrl: post.url, tag, date: post.date || null })
+  }
+
+  const stored = await db.prepare('SELECT post_url, tag, post_date FROM post_tags WHERE source_url = ?').bind(sourceUrl).all()
+  const stmts = []
+  const present = new Set()
+  for (const row of stored.results) {
+    const key = `${row.post_url}\n${row.tag}`
+    const want = wanted.get(key)
+    if (!want) {
+      stmts.push(db.prepare('DELETE FROM post_tags WHERE post_url = ? AND tag = ?').bind(row.post_url, row.tag))
+    } else {
+      present.add(key)
+      if ((row.post_date || null) !== want.date) {
+        stmts.push(db.prepare('UPDATE post_tags SET post_date = ? WHERE post_url = ? AND tag = ?').bind(want.date, row.post_url, row.tag))
+      }
     }
   }
-  await db.batch(stmts)
+  for (const [key, want] of wanted) {
+    if (present.has(key)) continue
+    stmts.push(db.prepare(
+      'INSERT OR IGNORE INTO post_tags (source_url, post_url, tag, post_date) VALUES (?,?,?,?)'
+    ).bind(sourceUrl, want.postUrl, want.tag, want.date))
+  }
+  if (stmts.length) await db.batch(stmts)
 }
 
 export const deletePostTags = async (db, sourceUrl) => {
@@ -79,7 +100,7 @@ export const getTagCloud = async (db) => {
 export const getPostsByTag = async (db, tag) => {
   const rows = await db.prepare(`
     SELECT pt.source_url, pt.post_url, pt.post_date,
-           s.posts, f.title AS feed_title, f.id AS playlist_id
+           s.posts, f.title AS feed_title, f.id AS playlist_id, f.slug AS playlist_slug
     FROM post_tags pt
     JOIN sources s ON s.url = pt.source_url
     JOIN feed_sources fs ON fs.source_url = pt.source_url
@@ -95,6 +116,6 @@ export const getPostsByTag = async (db, tag) => {
     const post = posts.find(p => p.url === r.post_url)
     if (!post || seen.has(r.post_url)) return []
     seen.add(r.post_url)
-    return [{ ...post, fromPlaylist: r.feed_title, fromPlaylistId: r.playlist_id }]
+    return [{ ...post, fromPlaylist: r.feed_title, fromPlaylistId: r.playlist_id, fromPlaylistSlug: r.playlist_slug }]
   })
 }

@@ -4,14 +4,16 @@
 
 Authors don't sign up, don't federate, don't install anything. They just keep blogging like it's 2005 and a discover instance picks them up.
 
-Hand-picked playlists of RSS/Atom feeds, organized by vibe. Browse, follow, read inline, export to your reader. Runs on Cloudflare Workers + D1.
+Hand-picked playlists of RSS/Atom feeds, organized by vibe. Browse, read inline, export to your reader. Runs on Cloudflare Workers + D1.
 
 Anyone can fork this, stand up their own instance, and curate their own playlists to _their_ taste. Your corner of the web for the low, low price of $0.
 
 ## Features
 
-- **Browse** — curated playlists with tag filtering, full-text search (returns individual blogs, not playlists), random shuffle, and a "new" view of recently-added sources
-- **Feed** — follow playlists or individual sources, read posts inline, export/import OPML, add any RSS URL directly
+- **New** — the front page: infinite scroll of the newest posts across every playlist
+- **Filters** — find blogs a la carte: filter by playlist or tag, full-text search (returns individual blogs, not playlists), export the current results (or everything) as OPML
+- **Random** — shuffled posts, same idea as New but randomized
+- **Playlists** — each has its own RSS feed and OPML download, so you can subscribe with your own reader instead of using the site
 - **Suggest a feed** — public submission form on `/about`; server-side validation rejects click-through and invalid feeds before they hit the queue
 - **Webmentions via RSS** — when sources in the directory link to each other, the cited author gets a mention feed at `/api/mentions/{domain}.xml` (e.g. `/api/mentions/gordonmclean.co.uk.xml`). Delivered the same way authors read everything else: their RSS reader
 - **PWA** — installable, dark/light theme, works offline for cached views

@@ -1,5 +1,5 @@
 import { trackHit } from './hit.js'
-import { handleDiscover, handleMentionsFeed, checkDiscoverFeeds, handleUserFeed, handlePersonalRss } from './discover.js'
+import { handleDiscover, handleMentionsFeed, checkDiscoverFeeds } from './discover.js'
 import { handleAuth, memberByToken } from './auth.js'
 import { getFeed } from './db-feeds.js'
 import { json } from './utils.js'
@@ -33,6 +33,14 @@ const PRIVATE = [
   '/README.md', '/LICENSE'
 ]
 
+// paths the server just hands the SPA shell to, no extra work. every route
+// discover.js's route() handles needs to be listed here too, or a refresh
+// 404s even though clicking there from inside the app works fine. bit us
+// twice already (/tag/*, /filters). /discover/:id isn't here - it needs its
+// own block below for the SEO meta + slug redirect stuff, which needs D1
+export const isSpaRoute = (path) =>
+  path === '/' || path === '/new' || path === '/random' || path === '/filters' || path.startsWith('/tag/')
+
 export default {
   async fetch (req, env, ctx) {
     const response = await handleRequest(req, env, ctx)
@@ -54,7 +62,7 @@ async function route (req, env, ctx) {
   const url = new URL(req.url)
   const path = url.pathname
 
-  if (path === '/') return withSec(env.ASSETS.fetch(new Request(new URL('/discover/index.html', req.url))))
+  if (isSpaRoute(path)) return withSec(env.ASSETS.fetch(new Request(new URL('/discover/index.html', req.url))))
 
   if (path === '/api/hit' && req.method === 'POST') {
     return new Response('ok')
@@ -81,9 +89,9 @@ async function route (req, env, ctx) {
 
   // Sitemap
   if (path === '/sitemap.xml') {
-    const rows = await env.DISCOVER_DB.prepare('SELECT id FROM feeds').all()
+    const rows = await env.DISCOVER_DB.prepare('SELECT id, slug FROM feeds').all()
     const base = `https://${env.DOMAIN_NAME}`
-    const locs = rows.results.map(r => `  <url><loc>${base}/discover/${r.id}</loc></url>`).join('\n')
+    const locs = rows.results.map(r => `  <url><loc>${base}/discover/${r.slug || r.id}</loc></url>`).join('\n')
     const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>${base}/</loc></url>\n  <url><loc>${base}/about</loc></url>\n${locs}\n</urlset>`
     return new Response(xml, { headers: { 'Content-Type': 'application/xml;charset=utf-8' } })
   }
@@ -96,6 +104,9 @@ async function route (req, env, ctx) {
     if (!id) return withSec(baseRes)
     const feed = await getFeed(env.DISCOVER_DB, id).catch(() => null)
     if (!feed) return withSec(baseRes)
+    // hex links still resolve forever, but once a slug exists that's the
+    // real url - bounce people there
+    if (feed.slug && feed.slug !== id) return Response.redirect(new URL(`/discover/${feed.slug}`, req.url), 301)
     const title = `${feed.title} · discover rss feeds worth reading`
     const desc = feed.description || 'A curated RSS playlist on discover.'
     const img = feed.coverImage?.startsWith('http') ? feed.coverImage : `https://${env.DOMAIN_NAME}/images/og.png`
@@ -117,19 +128,6 @@ async function route (req, env, ctx) {
     const html = await (await baseRes).text()
     return htmlRes(html.replace('<title>', inject + '\n  <title>'))
   }
-
-  // Linkable views
-  if (path === '/new' || path === '/random') return withSec(env.ASSETS.fetch(new Request(new URL('/discover/index.html', req.url))))
-
-  // Personal RSS feed — must be before asset fallthrough (path has a dot)
-  const feedRssMatch = path.match(/^\/feed\/([^/]+)\.xml$/)
-  if (feedRssMatch) return handlePersonalRss(req, env, feedRssMatch[1])
-
-  // User feed API
-  if (path.startsWith('/api/feed')) return handleUserFeed(req, env)
-
-  // Feed UI
-  if (path === '/feed') return withSec(env.ASSETS.fetch(new Request(new URL('/feed/index.html', req.url))))
 
   // About UI
   if (path === '/about') return withSec(env.ASSETS.fetch(new Request(new URL('/about/index.html', req.url))))

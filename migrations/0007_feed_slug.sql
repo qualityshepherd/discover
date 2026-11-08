@@ -1,0 +1,2 @@
+ALTER TABLE feeds ADD COLUMN slug TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS feeds_slug ON feeds(slug) WHERE slug IS NOT NULL;

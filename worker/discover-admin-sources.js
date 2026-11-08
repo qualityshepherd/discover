@@ -1,6 +1,6 @@
 import { json, parseJsonBody, isClickThrough } from './utils.js'
 import { makeId, getSourceData, deleteSourceData } from './db-sources.js'
-import { getFeed, saveFeed, getFeeds, removeFromIndex, getFeedsBySourceUrl } from './db-feeds.js'
+import { getFeed, saveFeed, getFeeds, removeFromIndex, getFeedsBySourceUrl, generateUniqueSlug, slugify } from './db-feeds.js'
 import { isBlocked, isUrlBlocked, getPending, savePending, getBlocked, saveBlocked } from './db-moderation.js'
 import { deletePostTags } from './db-search.js'
 import { fetchAndSaveSource, applySourceDatas, fetchSource } from './discover-cron.js'
@@ -85,11 +85,14 @@ export const handleAdd = async (req, db) => {
   if (!title && !sources.length) return json({ error: 'title required' }, 400)
   const id = makeId(sources[0] || title)
   if (await getFeed(db, id)) return json({ error: 'already exists' }, 409)
+  const finalTitle = title || new URL(sources[0]).hostname
+  const slug = await generateUniqueSlug(db, finalTitle)
 
   const entry = {
     id,
+    slug,
     type: sources.length > 1 ? 'playlist' : 'feed',
-    title: title || new URL(sources[0]).hostname,
+    title: finalTitle,
     description: body.description?.trim() || '',
     tags: Array.isArray(body.tags) ? body.tags.map(t => String(t).trim().toLowerCase()) : [],
     sources,
@@ -113,6 +116,14 @@ export const handleEdit = async (req, db, id) => {
   if (!feed) return json({ error: 'not found' }, 404)
 
   if (body.title !== undefined) feed.title = body.title.trim()
+  if (body.slug !== undefined) {
+    const wanted = slugify(body.slug)
+    if (wanted !== feed.slug) {
+      const taken = await getFeed(db, wanted)
+      if (taken && taken.id !== feed.id) return json({ error: 'slug already taken' }, 409)
+      feed.slug = wanted
+    }
+  }
   if (body.description !== undefined) feed.description = body.description.trim()
   if (Array.isArray(body.tags)) feed.tags = body.tags.map(t => String(t).trim().toLowerCase())
   if (Array.isArray(body.sources)) feed.sources = body.sources

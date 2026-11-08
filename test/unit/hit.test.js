@@ -12,11 +12,6 @@ test('shouldSkip: does not skip manifest.json locally (chalk classifies it centr
 test('shouldSkip: normal path is not skipped', t => { t.falsy(shouldSkip('/')) })
 test('shouldSkip: extension check ignores query string', t => { t.ok(shouldSkip('/style.css?v=2')) })
 
-test('identifyRssFeed: personal feed', async t => {
-  const feed = await identifyRssFeed('/feed/brine.xml', {})
-  t.is(feed, 'brine')
-})
-
 test('identifyRssFeed: mentions feed is prefixed', async t => {
   const feed = await identifyRssFeed('/api/mentions/hackernews.xml', {})
   t.is(feed, 'mentions:hackernews')
@@ -126,20 +121,6 @@ test('trackHit: forwards the response status when provided', async t => {
 
   const body = JSON.parse(captured.body)
   t.is(body.status, 404)
-})
-
-test('trackHit: forwards personal RSS feed hit even though it is under a skip-worthy shape', async t => {
-  let captured = null
-  await withMockFetch(async (url, init) => { captured = init; return new Response('ok') }, async () => {
-    const req = new Request('https://discover.brine.dev/feed/brine.xml', {
-      headers: { 'cf-connecting-ip': '1.2.3.4' }
-    })
-    await trackHit(req, { CHALK_HIT_SECRET: 'secret', DOMAIN_NAME: 'discover.brine.dev' })
-  })
-
-  t.ok(captured !== null)
-  const body = JSON.parse(captured.body)
-  t.is(body.rss_feed, 'brine')
 })
 
 test('trackHit: mentions feed under /api is not skipped', async t => {

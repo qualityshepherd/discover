@@ -1,4 +1,4 @@
-import { followBtnHtml, rssCopyBtnHtml } from './follows.js'
+import { rssCopyBtnHtml, opmlLinkHtml, linkCopyBtnHtml } from './playlist-actions.js'
 
 export const renderTag = (tag, active = false) =>
   `<button class="discover-tag${active ? ' active' : ''}" data-tag="${tag}">#${tag}</button>`
@@ -29,12 +29,15 @@ export const renderCard = (entry) => {
   const coverHtml = coverImg
     ? `<div class="discover-card-cover" aria-hidden="true"><img src="${coverImg}" alt="" loading="lazy"><div class="discover-card-cover-scrim"></div></div>`
     : ''
+  // always hand out the slug if there's one - prettier, and what shows up
+  // in chalk. hex id still resolves, we just don't give it out ourselves
+  const linkId = entry.slug || entry.id
   return `
-  <div class="discover-card" data-id="${entry.id}" data-letter="${letter}" style="--card-accent:${color}">
+  <div class="discover-card" data-id="${linkId}" data-letter="${letter}" style="--card-accent:${color}">
     ${coverHtml}
     <div class="discover-card-body">
       ${entry.featured ? '<span class="discover-featured">featured</span>' : ''}
-      <a class="discover-card-title" href="/discover/${entry.id}">${entry.title}</a>
+      <a class="discover-card-title" href="/discover/${linkId}">${entry.title}</a>
       ${entry.description ? `<div class="discover-card-desc">${entry.description}</div>` : ''}
       <div class="discover-card-meta">
         ${sourceCount ? `<span class="discover-type">${sourceCount} feeds</span>` : ''}
@@ -42,8 +45,9 @@ export const renderCard = (entry) => {
       </div>
       ${(entry.tags || []).length ? `<div class="discover-tags">${(entry.tags || []).map(t => renderTag(t)).join('')}</div>` : ''}
       <div class="discover-card-actions">
-        ${followBtnHtml(entry.id, entry.sources || [])}
-        ${rssCopyBtnHtml(entry.id)}
+        ${rssCopyBtnHtml(linkId)}
+        ${opmlLinkHtml(linkId)}
+        ${linkCopyBtnHtml(linkId)}
       </div>
     </div>
   </div>`

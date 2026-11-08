@@ -39,9 +39,6 @@ export const shouldSkip = (path) => {
 // routes, else null. Checked ahead of shouldSkip since several of these
 // live under /api, which is otherwise skipped.
 export async function identifyRssFeed (path, env) {
-  const personal = path.match(/^\/feed\/([^/]+)\.xml$/)
-  if (personal) return personal[1]
-
   const mentions = path.match(/^\/api\/mentions\/([^/]+)\.xml$/)
   if (mentions) return `mentions:${mentions[1]}`
 

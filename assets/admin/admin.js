@@ -5,6 +5,8 @@ import { renderCurate, updateCurateBadge } from './admin-curate.js'
 
 document.title = `${location.hostname} admin`
 
+$('pubkey-display').addEventListener('click', function () { this.select() })
+
 const routes = {
   '#discover': showDiscover,
   '#curate': showCurate,

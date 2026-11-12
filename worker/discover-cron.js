@@ -24,7 +24,9 @@ const parseSiteUrl = (xml) => {
 
 const stripProcessingInstructions = (xml) => xml.replace(/<\?(?!xml\s)[^?]*\?>/gi, '')
 
-const FETCH_HEADERS = { 'User-Agent': 'discover/1.0 (+https://discover.brine.dev; RSS reader)', Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*' }
+// Each fork should identify itself as its own instance, not as the original.
+const discoverUA = (domain) => domain ? `discover/1.0 (+https://${domain}; RSS reader)` : 'discover/1.0 (RSS reader)'
+const fetchHeaders = (domain) => ({ 'User-Agent': discoverUA(domain), Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*' })
 
 // Generous for even a large RSS feed, small enough to bound a malicious or
 // misbehaving server from making us buffer an unbounded response. Enforced
@@ -54,11 +56,12 @@ export const readLimitedText = async (res, maxBytes) => {
 
 // Manual redirect following — each hop is a counted subrequest on CF free tier.
 // Cap at 2 hops (3 total fetches max) so BATCH_SIZE=15 stays under the 50 limit.
-export const fetchSource = async (url, limit = 3) => {
+export const fetchSource = async (url, limit = 3, domain) => {
   try {
     let currentUrl = url
+    const headers = fetchHeaders(domain)
     for (let hop = 0; hop <= 2; hop++) {
-      const res = await fetch(currentUrl, { redirect: 'manual', signal: AbortSignal.timeout(10000), headers: FETCH_HEADERS })
+      const res = await fetch(currentUrl, { redirect: 'manual', signal: AbortSignal.timeout(10000), headers })
       if (res.status >= 300 && res.status < 400) {
         const loc = res.headers.get('location')
         if (!loc) return { posts: null, config: { url }, statusCode: res.status }
@@ -98,9 +101,9 @@ export const findImage = (posts) => {
   return null
 }
 
-export const fetchAndSaveSource = async (db, url) => {
+export const fetchAndSaveSource = async (db, url, domain) => {
   const now = Date.now()
-  const result = await fetchSource(url, 20)
+  const result = await fetchSource(url, 20, domain)
   let posts = []; let siteUrl = null; let image = null; let frequency = null
   if (result.posts) {
     frequency = computeFrequency(result.posts)
@@ -201,9 +204,9 @@ const SKIP_CURATE_DOMAINS = new Set([
   'wp.com', 'wordpress.com'
 ])
 
-const probeFeedUrl = async (domain) => {
+const probeFeedUrl = async (domain, myDomain) => {
   try {
-    const res = await fetch(`https://${domain}`, { signal: AbortSignal.timeout(5000), headers: { 'User-Agent': 'discover/1.0 (+https://discover.brine.dev; RSS reader)' } })
+    const res = await fetch(`https://${domain}`, { signal: AbortSignal.timeout(5000), headers: { 'User-Agent': discoverUA(myDomain) } })
     if (res.ok) {
       const html = await res.text()
       const m = html.match(/<link[^>]+type=["']application\/(rss|atom)\+xml["'][^>]+href=["']([^"']+)["']/i) ||
@@ -217,7 +220,7 @@ const probeFeedUrl = async (domain) => {
   } catch {}
   for (const p of ['/feed', '/rss', '/atom.xml', '/feed.xml', '/rss.xml', '/index.xml']) {
     try {
-      const res = await fetch(`https://${domain}${p}`, { signal: AbortSignal.timeout(4000), headers: { 'User-Agent': 'discover/1.0 (+https://discover.brine.dev; RSS reader)' } })
+      const res = await fetch(`https://${domain}${p}`, { signal: AbortSignal.timeout(4000), headers: { 'User-Agent': discoverUA(myDomain) } })
       if (!res.ok) continue
       const ct = res.headers.get('content-type') || ''
       if (ct.includes('xml') || ct.includes('rss') || ct.includes('atom')) return `https://${domain}${p}`
@@ -226,7 +229,7 @@ const probeFeedUrl = async (domain) => {
   return null
 }
 
-export const buildCurateCandidates = async (db, sourceUrls, freshData, _probe = probeFeedUrl) => {
+export const buildCurateCandidates = async (db, sourceUrls, freshData, _probe = probeFeedUrl, myDomain) => {
   if (!freshData.size) return
 
   const knownDomains = new Set()
@@ -277,7 +280,7 @@ export const buildCurateCandidates = async (db, sourceUrls, freshData, _probe = 
   const newToProbe = scored.filter(({ domain }) => !candidateDomains.has(domain)).slice(0, 3)
 
   for (const { domain, score, sources } of newToProbe) {
-    const feedUrl = await _probe(domain)
+    const feedUrl = await _probe(domain, myDomain)
     if (feedUrl) candidates.push({ domain, score, sources, firstSeen: now, probedAt: now, feedUrl })
   }
 
@@ -308,7 +311,7 @@ export const checkDiscoverFeeds = async (env) => {
 
   for (const entry of due) {
     const { url } = entry
-    const result = await fetchSource(url, 20)
+    const result = await fetchSource(url, 20, env.DOMAIN_NAME)
 
     if (result.posts) {
       const frequency = computeFrequency(result.posts)

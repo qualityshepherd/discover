@@ -7,9 +7,33 @@ import { isEdgeCacheable, withEdgeCache } from './cache.js'
 
 const escHtml = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
+// Hash of the inline theme-init <script> - identical in discover/index.html,
+// about/index.html and 404.html (test/unit/csp.test.js fails if any of them
+// drift from this without the hash getting updated too). It runs before
+// paint to avoid a flash of the wrong theme, which is why it's inline
+// instead of an external file like everything else.
+export const THEME_INIT_SCRIPT_HASH = "'sha256-bvBIUAeQ2tzEYRLy8ZwPtRT/ss5nYHCavo4Wt0GU1do='"
+
+// Report-only for now - logs violations to the browser console without
+// blocking anything. Once that's been watched for a few days with nothing
+// unexpected showing up, this becomes the real Content-Security-Policy.
+const CSP_REPORT_ONLY = [
+  "default-src 'self'",
+  `script-src 'self' ${THEME_INIT_SCRIPT_HASH}`,
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' https: data:",
+  'frame-src https:',
+  "connect-src 'self'",
+  'media-src https:',
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'"
+].join('; ')
+
 const SEC_HEADERS = {
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
   'Content-Security-Policy': 'upgrade-insecure-requests',
+  'Content-Security-Policy-Report-Only': CSP_REPORT_ONLY,
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'SAMEORIGIN',
   'Referrer-Policy': 'strict-origin-when-cross-origin'

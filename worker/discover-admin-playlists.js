@@ -5,7 +5,7 @@ import { deletePostTags } from './db-search.js'
 import { fetchAndSaveSource, applySourceDatas } from './discover-cron.js'
 
 // POST /api/discover/admin/:id/sources
-export const handlePlaylistSourceAdd = async (req, db, id) => {
+export const handlePlaylistSourceAdd = async (req, db, id, domain) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
   const url = body.url?.trim().replace(/\/+$/, '')
@@ -17,7 +17,7 @@ export const handlePlaylistSourceAdd = async (req, db, id) => {
 
   let sourceData = await getSourceData(db, url)
   if (!sourceData) {
-    const result = await fetchAndSaveSource(db, url)
+    const result = await fetchAndSaveSource(db, url, domain)
     sourceData = result.sourceData
   }
 
@@ -31,7 +31,7 @@ export const handlePlaylistSourceAdd = async (req, db, id) => {
 }
 
 // POST /api/discover/admin/:id/refresh
-export const handlePlaylistRefresh = async (db, id) => {
+export const handlePlaylistRefresh = async (db, id, domain) => {
   const feed = await getFeed(db, id)
   if (!feed) return json({ error: 'not found' }, 404)
   if (!feed.sources?.length) return json({ ok: true, fetched: 0 })
@@ -41,7 +41,7 @@ export const handlePlaylistRefresh = async (db, id) => {
   const sourceDatas = await Promise.all(feed.sources.map(async url => {
     const existing = await getSourceData(db, url)
     if (!existing?.lastFetched) {
-      const { sourceData } = await fetchAndSaveSource(db, url)
+      const { sourceData } = await fetchAndSaveSource(db, url, domain)
       fetched++
       return sourceData
     }

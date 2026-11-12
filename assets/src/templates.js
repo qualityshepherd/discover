@@ -43,7 +43,7 @@ export const feedsItemTemplate = (item) => {
   return `
   <div class="post feed-post" data-url="${url}" data-feed-url="${safeUrl(item.feed?.url || '')}">
     <div class="feed-meta">
-      ${avatar ? `<img class="feed-avatar" src="${avatar}" alt="" onerror="this.style.display='none'">` : ''}
+      ${avatar ? `<img class="feed-avatar" src="${avatar}" alt="">` : ''}
       ${url
         ? `<a class="feed-source-name" href="${url}" target="_blank" rel="noopener noreferrer" title="${sourceName}">${sourceName}</a>`
         : `<span class="feed-source-name" title="${sourceName}">${sourceName}</span>`}

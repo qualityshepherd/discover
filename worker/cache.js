@@ -12,6 +12,7 @@ const CACHEABLE = [
   /^\/api\/discover\/tag\/[^/]+$/,
   /^\/api\/discover\/search$/,
   /^\/api\/discover\/[^/]+\/rss$/,
+  /^\/api\/discover\/[^/]+\/opml$/,
   /^\/api\/mentions\/[^/]+\.xml$/
 ]
 

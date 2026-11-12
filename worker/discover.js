@@ -66,12 +66,12 @@ const handlePlaylist = async (db, id) => {
 }
 
 // Resolve source data for a list of URLs from D1, live-fetch anything missing.
-const resolveSourceAll = async (db, allSourceUrls) => {
+const resolveSourceAll = async (db, allSourceUrls, domain) => {
   const sourceAll = await getSourceAllData(db, allSourceUrls)
 
   const stillMissing = allSourceUrls.filter(u => !sourceAll[makeId(u)])
   for (const url of stillMissing) {
-    const result = await fetchSource(url, 3)
+    const result = await fetchSource(url, 3, domain)
     if (!result.posts?.length) continue
     const posts = result.posts.slice(0, 3).map(p => ({
       title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content
@@ -130,7 +130,7 @@ export const handleNew = async (db, url) => {
 // POST /api/discover/submit — public submission, no auth. Rate-limited by IP
 // since this triggers a real outbound fetch regardless of whether the
 // submission turns out to be a duplicate/pending/invalid feed.
-const handleSubmit = async (req, db) => {
+const handleSubmit = async (req, db, domain) => {
   const ip = req.headers.get('CF-Connecting-IP') || 'unknown'
   const rlKey = `ratelimit:submit:${ip}`
   const rlRecord = await getRateLimit(db, rlKey)
@@ -155,7 +155,7 @@ const handleSubmit = async (req, db) => {
   if (alreadySource) return ok
   if ((pending || []).some(f => f.url === url)) return ok
 
-  const result = await fetchSource(url, 5)
+  const result = await fetchSource(url, 5, domain)
   if (!result.posts?.length) return ok
   if (isClickThrough(result.posts)) return ok
 
@@ -201,7 +201,7 @@ export const handleDiscover = async (req, env, ctx) => {
     const tag = decodeURIComponent(tagMatch[1]).toLowerCase()
     return cors(json(await getPostsByTag(db, tag)))
   }
-  if (method === 'POST' && path === '/api/discover/submit') return handleSubmit(req, db)
+  if (method === 'POST' && path === '/api/discover/submit') return handleSubmit(req, db, env.DOMAIN_NAME)
   if (method === 'GET' && path === '/api/discover/search') {
     const q = url.searchParams.get('q')?.trim()
     const tag = url.searchParams.get('tag') || undefined
@@ -239,26 +239,26 @@ export const handleDiscover = async (req, env, ctx) => {
   if (playlistSourceMatch) {
     const id = playlistSourceMatch[1]
     if (!isOwner && !isCuratorOf(curator, id)) return json({ error: 'unauthorized' }, 401)
-    if (method === 'POST') return handlePlaylistSourceAdd(req, db, id)
+    if (method === 'POST') return handlePlaylistSourceAdd(req, db, id, env.DOMAIN_NAME)
     if (method === 'DELETE') return handlePlaylistSourceRemove(req, db, id)
   }
 
   if (method === 'POST' && path === '/api/discover/admin/source/refresh') {
     if (!isOwner) return json({ error: 'unauthorized' }, 401)
-    return handleSourceRefresh(req, db)
+    return handleSourceRefresh(req, db, env.DOMAIN_NAME)
   }
 
   const playlistRefreshMatch = path.match(/^\/api\/discover\/admin\/([^/]+)\/refresh$/)
   if (playlistRefreshMatch && method === 'POST') {
     const id = playlistRefreshMatch[1]
     if (!isOwner && !isCuratorOf(curator, id)) return json({ error: 'unauthorized' }, 401)
-    return handlePlaylistRefresh(db, id)
+    return handlePlaylistRefresh(db, id, env.DOMAIN_NAME)
   }
 
   // Specific PATCH/DELETE paths that would otherwise match the /admin/:id playlist catch-all
   if (path === '/api/discover/admin/source') {
     if (!isOwner) return json({ error: 'unauthorized' }, 401)
-    if (method === 'PATCH') return handleSourceEdit(req, db)
+    if (method === 'PATCH') return handleSourceEdit(req, db, env.DOMAIN_NAME)
     if (method === 'DELETE') return handleSourceDelete(req, db)
   }
   if (method === 'DELETE' && path === '/api/discover/admin/pending') {
@@ -304,20 +304,20 @@ export const handleDiscover = async (req, env, ctx) => {
     return json(await getStaleSourceMeta(db))
   }
   if (method === 'GET' && path === '/api/discover/admin/pending') return handlePendingList(db)
-  if (method === 'POST' && path === '/api/discover/admin/validate') return handleValidate(req, db)
+  if (method === 'POST' && path === '/api/discover/admin/validate') return handleValidate(req, db, env.DOMAIN_NAME)
   if (method === 'POST' && path === '/api/discover/admin/approve') return handleApprove(req, db)
   if (method === 'POST' && path === '/api/discover/admin/add') return handleAdd(req, db)
-  if (method === 'POST' && path === '/api/discover/admin/source') return handleSourceRegister(req, db)
+  if (method === 'POST' && path === '/api/discover/admin/source') return handleSourceRegister(req, db, env.DOMAIN_NAME)
 
   if (method === 'GET' && path === '/api/discover/admin/blocked') return handleBlockedList(db)
   if (method === 'PUT' && path === '/api/discover/admin/blocked') return handleBlockedSave(req, db)
 
   if (method === 'POST' && path === '/api/discover/admin/build-link-graph') {
     const sourceUrls = await getAllSourceUrls(db)
-    const sourceAll = await resolveSourceAll(db, sourceUrls)
+    const sourceAll = await resolveSourceAll(db, sourceUrls, env.DOMAIN_NAME)
     const freshData = new Map(sourceUrls.map(u => [u, sourceAll[makeId(u)]]).filter(([, d]) => d))
     await buildLinkGraph(db, sourceUrls, freshData)
-    await buildCurateCandidates(db, sourceUrls, freshData)
+    await buildCurateCandidates(db, sourceUrls, freshData, undefined, env.DOMAIN_NAME)
     return json({ ok: true, sources: freshData.size })
   }
   if (method === 'POST' && path === '/api/discover/admin/check') {

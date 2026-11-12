@@ -60,7 +60,7 @@ const renderModalItem = (modal, item) => {
 
   const sourceEl = modal.querySelector('.feed-modal-source')
   const domain = feedDomain(item.feed?.url || item.url || '')
-  const favicon = domain ? `<img src="https://www.google.com/s2/favicons?domain=${domain}&sz=16" class="feed-avatar" alt="" onerror="this.style.display='none'">` : ''
+  const favicon = domain ? `<img src="https://www.google.com/s2/favicons?domain=${domain}&sz=16" class="feed-avatar" alt="">` : ''
   const feedName = item.feed?.title || domain || ''
   const playlist = item.fromPlaylist && item.fromPlaylistId
     ? ` · <a class="feed-modal-playlist" href="/discover/${item.fromPlaylistId}">${item.fromPlaylist}</a>`

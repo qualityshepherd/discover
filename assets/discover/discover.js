@@ -4,6 +4,15 @@ import { renderTag, renderCard } from './render.js'
 import { handleRssCopy, injectSourceRssButtons } from './playlist-actions.js'
 import { injectMentionsLinks } from './mentions.js'
 
+// Avatar images (feed favicons) hide themselves on load failure instead of
+// showing a broken-image icon. error events don't bubble, so this has to be
+// a capture-phase listener on document rather than a normal delegated one -
+// catches it regardless of which module (here or modal.js) rendered the img.
+// A CSP that blocks inline handlers means this can't just be onerror="...".
+document.addEventListener('error', (e) => {
+  if (e.target.classList?.contains('feed-avatar')) e.target.style.display = 'none'
+}, true)
+
 // browse view
 
 let allEntries = []

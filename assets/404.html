@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/css/style.css">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="/favicon.png" type="image/png">
-  <script>document.documentElement.dataset.theme = localStorage.getItem('discover_theme') || 'dark'</script>
+  <script>document.documentElement.dataset.theme = localStorage.getItem('discover_theme') || 'dark'; if (localStorage.getItem('discover_token')) document.addEventListener('DOMContentLoaded', () => { const a = document.getElementById('nav-admin'); if (a) a.classList.remove('hidden') })</script>
 </head>
 <body>
 <div id="app">

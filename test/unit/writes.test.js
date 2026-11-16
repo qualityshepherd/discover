@@ -250,20 +250,18 @@ test('buildLinkGraph: historical rows that are the same post respelled collapse 
   t.is(stored[0].from_title, 'New spelling') // newest found_at wins
 })
 
-// thegoodwork.blog became finest.day - the source url was renamed, and the
-// old domain's rows kept serving. a mention is a claim verified from a feed
-// we curate: no feed, no claim.
-test('buildLinkGraph: rows from a source no longer curated are dropped', async t => {
+// no source-membership pruning - a row from a source that's gone (or just
+// respelled its feed url) stays. the prune that existed briefly ate two
+// real finest.day mentions because the feed url drifted.
+test('buildLinkGraph: rows from a source no longer listed survive', async t => {
   if (skip) return
   const db = makeDb()
-  const sources = ['https://finest.day/posts_feed', 'https://fresh.test/feed', 'https://bob.test/feed']
-  db.sqlite.exec("INSERT INTO mentions (from_source, from_post, from_title, from_date, to_domain, to_url, found_at) VALUES ('https://thegoodwork.blog/posts_feed', 'https://thegoodwork.blog/posts/p1', 'Old domain', '2026-05-06', 'bob.test', 'https://bob.test/x', '2026-05-06T00:00:00.000Z')")
-  db.sqlite.exec("INSERT INTO mentions (from_source, from_post, from_title, from_date, to_domain, to_url, found_at) VALUES ('https://finest.day/posts_feed', 'https://finest.day/posts/p1', 'New domain', '2026-05-06', 'bob.test', 'https://bob.test/x', '2026-06-01T00:00:00.000Z')")
+  const sources = ['https://fresh.test/feed', 'https://bob.test/feed']
+  db.sqlite.exec("INSERT INTO mentions (from_source, from_post, from_title, from_date, to_domain, to_url, found_at) VALUES ('https://gone.test/feed', 'https://gone.test/p1', 'Ghost', '2026-05-06', 'bob.test', 'https://bob.test/x', '2026-05-06T00:00:00.000Z')")
   await buildLinkGraph(db, sources, new Map([['https://fresh.test/feed', {
     posts: [{ url: 'https://fresh.test/p1', title: 'F', date: '2026-11-01', content: '<a href="https://bob.test/y">y</a>' }]
   }]]))
-  const stored = rows(db, "SELECT from_title FROM mentions WHERE to_url='https://bob.test/x'")
-  t.deepEqual(stored.map(r => r.from_title), ['New domain'])
+  t.is(rows(db, "SELECT * FROM mentions WHERE from_post='https://gone.test/p1'").length, 1)
 })
 
 // the real brine.dev case: no current-window post links the domain at all,

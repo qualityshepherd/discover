@@ -4,11 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>about · discover rss feeds worth reading</title>
-  <meta name="description" content="discover is a curated list of RSS feeds worth following. No accounts, no tracking.">
+  <meta name="description" content="discover is a curated list of RSS feeds worth following. No accounts, no tracking. Plus mentions: see which blogs linked to yours, and show them under your posts.">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="discover">
   <meta property="og:title" content="about · discover">
-  <meta property="og:description" content="discover is a curated list of RSS feeds worth following. No accounts, no tracking.">
+  <meta property="og:description" content="discover is a curated list of RSS feeds worth following. No accounts, no tracking. Plus mentions: see which blogs linked to yours, and show them under your posts.">
   <meta property="og:url" content="https://discover.brine.dev/about">
   <meta property="og:image" content="https://discover.brine.dev/images/og.png">
   <meta name="twitter:card" content="summary_large_image">
@@ -47,6 +47,9 @@
 
   <main class="container">
     <div class="feed-posts">
+      <p>Discover is a human-curated set of blogs worth reading: independent, open, non-commercial, full text RSS. Read them here, or take them to your reader.</p>
+      <p>No accounts, no ads, no algorithm but the one you build. Everything links back to the original blog. The posts belong to their author.</p>
+
       <div class="feed-add-wrap" id="suggest-wrap">
         <label for="suggest-url" class="sr-only">RSS feed URL</label>
         <input type="url" id="suggest-url" placeholder="https://example.com/feed.xml" autocomplete="off" spellcheck="false">
@@ -54,11 +57,27 @@
       </div>
       <div id="suggest-status" class="feed-add-status"></div>
 
-      <p>Discover is a human-curated set of blogs worth reading: independent, open, non-commercial, full text RSS. Read them here, on the author's site or in your own reader.</p>
-      <p>There are no accounts, no ads; the algorithm is yours to build. Everything here links back to the original blog. The posts belong to the people who wrote them.</p>
-      <p>Know a great site? <a href="#suggest-url">Submit it</a>.</p>
-      <p><b>Mentions</b>: if your site is listed in discover, you can follow your <code>↩ mentions</code> feed to see when other writers in the directory link to your work.</p>
-      <p class="muted">by <a href="https://brine.dev" target="_blank" rel="noopener">brine</a> · <a href="https://4d2.social/@brine"  target="_blank" rel="noopener">@brine@4d2.social</a> · <a href="https://github.com/qualityshepherd/discover" target="_blank" rel="noopener">source code</a> · <a href="https://ko-fi.com/qualityshepherd" target="_blank" rel="noopener">ko-fi</a></p>
+      <h2 id="mentions">Mentions</h2>
+      <p>RSS mention feeds are created when a blog in discover links to another blog in discover. Someone thought enough of your post to write about it on their own site, using their name.</p>
+
+      <h3>Follow your mentions</h3>
+      <p>Every site in discover has a feed of posts that linked to it. Drop it in your reader:</p>
+      <p><code>https://discover.brine.dev/api/mentions/<b>yourdomain.com</b>.xml</code></p>
+
+      <h3>Show mentions with your posts</h3>
+      <p>Add this Javascript snippet at the end of your post template or wherever your posts end. Mentions will display as a list or not at all if there are none:</p>
+      <p><code>&lt;script src="https://discover.brine.dev/mentions-embed.js" defer&gt;&lt;/script&gt;</code></p>
+      <p>Works on any blog that lets you edit a template: static, Bear, hand-written, whatever. No account, no tracking, no stylesheet. Mention api calls are not logged. They render as plain HTML.</p>
+
+      <h3>But I have a SPA</h3>
+      <p>A <code>&lt;script&gt;</code> tag inserted by JavaScript never runs, so single-page sites call the embed themselves. Add <code>data-manual</code> to the tag, and the pass it the post element:</p>
+      <pre><code>&lt;script src="https://discover.brine.dev/mentions-embed.js" data-manual defer&gt;&lt;/script&gt;</code></pre>
+      <pre><code>// after rendering a post
+const article = document.querySelector('article.post')
+window.discoverMentions?.(article)</code></pre>
+      <p>It reads the current URL by default. Pass the post's URL as a second argument if needed.</p>
+
+      <p class="muted">by <a href="https://brine.dev" target="_blank" rel="noopener">brine</a> · <a href="https://masto.nu/@brine"  target="_blank" rel="noopener">@brine@masto.nu</a> · <a href="https://github.com/qualityshepherd/discover" target="_blank" rel="noopener">source code</a> · <a href="https://ko-fi.com/qualityshepherd" target="_blank" rel="noopener">ko-fi</a></p>
     </div>
 
   </main>

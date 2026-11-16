@@ -176,6 +176,20 @@ code {
   border-radius: var(--radius-sm);
 }
 
+/* multi-line snippets scroll sideways rather than wrap - a wrapped line
+   of code reads like two lines of code */
+pre {
+  background: var(--color-surface-2);
+  border-radius: var(--radius-sm);
+  padding: 0.75em 1em;
+  overflow-x: auto;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+}
+
 .container {
   max-width: 65ch;
   width: 100%;

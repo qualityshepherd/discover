@@ -189,8 +189,6 @@ export const buildLinkGraph = async (db, sourceUrls, freshData) => {
 
   if (!byTarget.size) return
 
-  const sourceKeys = new Set(sourceUrls.map(u => urlMatchKey(u) || u))
-
   await Promise.all([...byTarget.entries()].map(async ([domain, newItems]) => {
     const existing = await getMentions(db, domain)
     // identity is normalized on purpose - a feed respelling its own urls
@@ -205,10 +203,11 @@ export const buildLinkGraph = async (db, sourceUrls, freshData) => {
       return prev ? { ...m, foundAt: prev.foundAt } : m
     })
     const newKeys = new Set(items.map(key))
-    // a mention is a claim verified from a feed we curate - rows from a
-    // source that's been removed or renamed (thegoodwork.blog became
-    // finest.day) lose the feed that backed them, so they go
-    const kept = existing.filter(m => sourceKeys.has(norm(m.fromSource)) && !newKeys.has(key(m)))
+    // deliberately NO pruning by source membership here - feed urls drift
+    // (redirects, domain renames, path changes) and an automatic prune
+    // keyed on exact spelling ate real mentions once. rows from genuinely
+    // removed sources can linger; that's a curation chore, not data loss.
+    const kept = existing.filter(m => !newKeys.has(key(m)))
     // historical rows can hold both spellings of the same post from
     // before normalization - a rebuild never re-harvests posts that left
     // the feed window, so the heal has to happen here: newest wins

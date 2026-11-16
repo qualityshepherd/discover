@@ -3,6 +3,7 @@ import { makeId, getSourceData, getSourceDataBulk, saveSourceData, updateSourceM
 import { getFeeds, saveFeed } from './db-feeds.js'
 import { getBlocked, getDismissedDomains, getCandidates, saveCandidates } from './db-moderation.js'
 import { getMentions, saveMentions } from './db-mentions.js'
+import { urlMatchKey } from './url-normalize.js'
 import { getCronState, setCronState } from './db-auth.js'
 import { savePostTags } from './db-search.js'
 import { listCurators, deleteCurator, isCuratorInactive } from './db-curators.js'
@@ -158,7 +159,9 @@ export const buildLinkGraph = async (db, sourceUrls, freshData) => {
           if (domain === fromDomain) continue
           if (VIDEO_DOMAINS.has(domain)) continue
           if (!domainToSource.has(domain)) continue
-          const dedupeKey = `${fromHash}:${post.url}:${domain}`
+          // per href, not per domain - a roundup linking three of your
+          // posts is three mentions. same page linked twice is still one.
+          const dedupeKey = `${fromHash}:${post.url}:${urlMatchKey(href) || href}`
           if (seenInPost.has(dedupeKey)) continue
           seenInPost.add(dedupeKey)
           if (!byTarget.has(domain)) byTarget.set(domain, [])
@@ -176,20 +179,48 @@ export const buildLinkGraph = async (db, sourceUrls, freshData) => {
     }
   }
 
+  // domains whose only mentions are historical never appear in the fresh
+  // harvest, but their stored rows still need the prune/dedupe pass below
+  // - a heal that waits for fresh data never heals them
+  const stored = await db.prepare('SELECT DISTINCT to_domain FROM mentions').all()
+  for (const row of stored.results) {
+    if (!byTarget.has(row.to_domain)) byTarget.set(row.to_domain, [])
+  }
+
   if (!byTarget.size) return
+
+  const sourceKeys = new Set(sourceUrls.map(u => urlMatchKey(u) || u))
 
   await Promise.all([...byTarget.entries()].map(async ([domain, newItems]) => {
     const existing = await getMentions(db, domain)
-    const existingByKey = new Map(existing.map(m => [`${m.fromSource}:${m.fromPost}`, m]))
+    // identity is normalized on purpose - a feed respelling its own urls
+    // (www. appearing, trailing slash) must replace its old rows, not
+    // stack next to them. bit us for real: alvinashcraft.com doubled.
+    const norm = (u) => urlMatchKey(u) || u || ''
+    const key = (m) => `${norm(m.fromSource)}:${norm(m.fromPost)}:${norm(m.toUrl)}`
+    const existingByKey = new Map(existing.map(m => [key(m), m]))
     // A mention seen again keeps its original foundAt; only genuinely new ones get "now"
     const items = newItems.map(m => {
-      const prev = existingByKey.get(`${m.fromSource}:${m.fromPost}`)
+      const prev = existingByKey.get(key(m))
       return prev ? { ...m, foundAt: prev.foundAt } : m
     })
-    const newKeys = new Set(items.map(m => `${m.fromSource}:${m.fromPost}`))
-    const kept = existing.filter(m => !newKeys.has(`${m.fromSource}:${m.fromPost}`))
+    const newKeys = new Set(items.map(key))
+    // a mention is a claim verified from a feed we curate - rows from a
+    // source that's been removed or renamed (thegoodwork.blog became
+    // finest.day) lose the feed that backed them, so they go
+    const kept = existing.filter(m => sourceKeys.has(norm(m.fromSource)) && !newKeys.has(key(m)))
+    // historical rows can hold both spellings of the same post from
+    // before normalization - a rebuild never re-harvests posts that left
+    // the feed window, so the heal has to happen here: newest wins
+    const seen = new Set()
     const updated = [...kept, ...items]
       .sort((a, b) => new Date(b.foundAt) - new Date(a.foundAt))
+      .filter(m => {
+        const k = key(m)
+        if (seen.has(k)) return false
+        seen.add(k)
+        return true
+      })
       .slice(0, 100)
     await saveMentions(db, domain, updated)
   }))

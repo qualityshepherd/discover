@@ -9,7 +9,8 @@ test('isEdgeCacheable: public RSS and discover read routes', t => {
     '/api/discover/tag/rss',
     '/api/discover/search?q=cats',
     '/api/discover/abc123/rss',
-    '/api/mentions/example.com.xml'
+    '/api/mentions/example.com.xml',
+    '/api/mentions/for?url=https%3A%2F%2Fexample.com%2Fpost'
   ]) t.ok(isEdgeCacheable(get(p)), p)
 })
 

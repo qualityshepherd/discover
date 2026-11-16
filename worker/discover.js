@@ -7,7 +7,7 @@ import {
 } from './db-feeds.js'
 import { isCuratorOf, shouldUpdateLastSeen, getCurator, saveCurator } from './db-curators.js'
 import { isBlocked, getPending, savePending, getBlocked } from './db-moderation.js'
-import { getMentions, getSourceMentionCounts } from './db-mentions.js'
+import { getMentions, getMentionsForUrl, getSourceMentionCounts } from './db-mentions.js'
 import { getCronState, getRateLimit, setRateLimit } from './db-auth.js'
 import { searchSources, getTagCloud, getPostsByTag } from './db-search.js'
 import { checkDiscoverFeeds, computeFrequency, fetchSource, findImage, buildLinkGraph, buildCurateCandidates } from './discover-cron.js'
@@ -369,6 +369,19 @@ export const handleDiscover = async (req, env, ctx) => {
   }
 
   return json({ error: 'not found' }, 404)
+}
+
+// GET /api/mentions/for?url=<post-url> - the footer embed's endpoint.
+// CORS * on purpose: the snippet runs on other people's blogs, and this
+// is public data (same rows the .xml feed publishes). Reeder gets the
+// feed, footers get this - both read the same mentions table.
+export const handleMentionsForUrl = async (db, reqUrl) => {
+  const pageUrl = new URL(reqUrl).searchParams.get('url') || ''
+  const mentions = await getMentionsForUrl(db, pageUrl)
+  const res = json({ mentions })
+  res.headers.set('Access-Control-Allow-Origin', '*')
+  res.headers.set('Cache-Control', EDGE_CACHE_CONTROL)
+  return res
 }
 
 // GET /api/mentions/:sourceId.xml

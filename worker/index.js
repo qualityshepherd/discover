@@ -1,5 +1,5 @@
 import { trackHit } from './hit.js'
-import { handleDiscover, handleMentionsFeed, checkDiscoverFeeds } from './discover.js'
+import { handleDiscover, handleMentionsFeed, handleMentionsForUrl, checkDiscoverFeeds } from './discover.js'
 import { handleAuth, memberByToken } from './auth.js'
 import { getFeed } from './db-feeds.js'
 import { json } from './utils.js'
@@ -95,6 +95,9 @@ async function route (req, env, ctx) {
   // Mentions feeds — public RSS per source
   const mentionsMatch = path.match(/^\/api\/mentions\/([^/]+)\.xml$/)
   if (mentionsMatch) return handleMentionsFeed(env.DISCOVER_DB, mentionsMatch[1], req.url)
+
+  // Mentions of one page — public JSON for the footer embed
+  if (path === '/api/mentions/for') return handleMentionsForUrl(env.DISCOVER_DB, req.url)
 
   // Discover routes — public except /admin sub-paths (auth handled inside)
   if (path.startsWith('/api/discover')) return handleDiscover(req, env, ctx)

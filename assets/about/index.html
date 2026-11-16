@@ -70,7 +70,7 @@
       <p>Works on any blog that lets you edit a template: static, Bear, hand-written, whatever. No account, no tracking, no stylesheet. Mention api calls are not logged. They render as plain HTML.</p>
 
       <h3>But I have a SPA</h3>
-      <p>A <code>&lt;script&gt;</code> tag inserted by JavaScript never runs, so single-page sites call the embed themselves. Add <code>data-manual</code> to the tag, and the pass it the post element:</p>
+      <p>A <code>&lt;script&gt;</code> tag inserted via <code>innerHTML</code> never runs, so single-page sites call the embed themselves. Add <code>data-manual</code> to the tag, then pass it the post element:</p>
       <pre><code>&lt;script src="https://discover.brine.dev/mentions-embed.js" data-manual defer&gt;&lt;/script&gt;</code></pre>
       <pre><code>// after rendering a post
 const article = document.querySelector('article.post')

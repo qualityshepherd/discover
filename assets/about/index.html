@@ -69,6 +69,10 @@
       <p><code>&lt;script src="https://discover.brine.dev/mentions-embed.js" defer&gt;&lt;/script&gt;</code></p>
       <p>Works on any blog that lets you edit a template: static, Bear, hand-written, whatever. No account, no tracking, no stylesheet. Mention api calls are not logged. They render as plain HTML.</p>
 
+      <h3>Rather not run my script?</h3>
+      <p>Fair. It's one small file. <a href="/mentions-embed.js">Grab it</a>, read it, host it on your own site, and point it back here for the data. Then it can't change unless you change it:</p>
+      <p><code>&lt;script src="/mentions-embed.js" data-api="https://discover.brine.dev" defer&gt;&lt;/script&gt;</code></p>
+
       <h3>But I have a SPA</h3>
       <p>A <code>&lt;script&gt;</code> tag inserted via <code>innerHTML</code> never runs, so single-page sites call the embed themselves. Add <code>data-manual</code> to the tag, then pass it the post element:</p>
       <pre><code>&lt;script src="https://discover.brine.dev/mentions-embed.js" data-manual defer&gt;&lt;/script&gt;</code></pre>
@@ -77,7 +81,7 @@ const article = document.querySelector('article.post')
 window.discoverMentions?.(article)</code></pre>
       <p>It reads the current URL by default. Pass the post's URL as a second argument if needed.</p>
 
-      <p class="muted">by <a href="https://brine.dev" target="_blank" rel="noopener">brine</a> · <a href="https://masto.nu/@brine"  target="_blank" rel="noopener">@brine@masto.nu</a> · <a href="https://github.com/qualityshepherd/discover" target="_blank" rel="noopener">source code</a> · <a href="https://ko-fi.com/qualityshepherd" target="_blank" rel="noopener">ko-fi</a></p>
+      <p class="muted">by <a href="https://brine.dev" target="_blank" rel="noopener">brine</a> · <a href="https://masto.nu/@brine"  target="_blank" rel="noopener">@brine@masto.nu</a> · <a href="mailto:ping@brine.dev">ping@brine.dev</a> · <a href="https://github.com/qualityshepherd/discover" target="_blank" rel="noopener">source code</a> · <a href="https://ko-fi.com/qualityshepherd" target="_blank" rel="noopener">ko-fi</a></p>
     </div>
 
   </main>

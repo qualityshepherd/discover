@@ -11,11 +11,18 @@
 // call window.discoverMentions(el) after rendering a post - optionally
 // with the post's url as a second arg when location isn't it.
 //
+// Rather not load a script from someone else's server? Fair. Copy this file
+// to your own site and point it back here for the data:
+//
+//   <script src="/mentions-embed.js" data-api="https://discover.brine.dev" defer></script>
+//
 // Not comments... mentions.
 (() => {
   const script = document.currentScript
   if (!script) return
-  const api = new URL('/api/mentions/for', script.src)
+  // data-api is for people who copy this file onto their own site instead
+  // of loading it from here - otherwise it'd ask their server for mentions
+  const api = new URL('/api/mentions/for', script.dataset.api || script.src)
 
   // the api is trusted today, but a feed's <link> is still third-party
   // input - and post-federation this is a real boundary. textContent

@@ -1,12 +1,11 @@
 import { parseFeed } from './feedParser.js'
 import { makeId, getSourceData, getSourceDataBulk, saveSourceData, updateSourceMeta, getAllSourceUrls, getStaleSourceMeta } from './db-sources.js'
 import { getFeeds, saveFeed } from './db-feeds.js'
-import { getBlocked, getDismissedDomains, getCandidates, saveCandidates } from './db-moderation.js'
+import { getBlocked, getDismissedDomains, getCandidates, saveCandidates, isUrlBlocked } from './db-moderation.js'
 import { getMentions, saveMentions } from './db-mentions.js'
 import { urlMatchKey } from './url-normalize.js'
 import { getCronState, setCronState } from './db-auth.js'
 import { savePostTags } from './db-search.js'
-import { listCurators, deleteCurator, isCuratorInactive } from './db-curators.js'
 
 export const VIDEO_DOMAINS = new Set(['youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv', 'rumble.com'])
 
@@ -146,8 +145,8 @@ export const buildLinkGraph = async (db, sourceUrls, freshData) => {
 
   for (const [sourceUrl, data] of freshData) {
     if (!data?.posts?.length) continue
-    let fromDomain
-    try { fromDomain = new URL(sourceUrl).hostname.replace(/^www\./, '') } catch { continue }
+    const fromDomain = blogDomain(sourceUrl, data)
+    if (!fromDomain) continue
     const fromHash = makeId(sourceUrl)
 
     for (const post of data.posts) {
@@ -231,59 +230,128 @@ const SKIP_CURATE_DOMAINS = new Set([
   'wikipedia.org', 'archive.org', 'web.archive.org',
   'google.com', 'apple.com', 'microsoft.com', 'amazon.com', 'amzn.to',
   'paypal.com', 'stripe.com', 'netlify.app', 'vercel.app', 'github.io',
-  'wp.com', 'wordpress.com'
+  'wp.com', 'wordpress.com',
+  // big sites everyone links that aren't blogs. exact match, so
+  // someone.substack.com still counts - only the platform itself is out
+  'medium.com', 'goodreads.com', 'mastodon.social', 'bsky.app', 'threads.net',
+  'substack.com', 'reuters.com', 'bbc.co.uk', 'bbc.com', 'nytimes.com',
+  'theguardian.com', 'washingtonpost.com', 'apnews.com', 'bloomberg.com',
+  'cnn.com', 'npr.org', 'imdb.com', 'spotify.com', 'open.spotify.com',
+  'news.ycombinator.com', 'stackoverflow.com', 'en.wikipedia.org',
+  'doi.org', 'commons.wikimedia.org', 'kickstarter.com', 'buttondown.com'
 ])
 
-const probeFeedUrl = async (domain, myDomain) => {
-  try {
-    const res = await fetch(`https://${domain}`, { signal: AbortSignal.timeout(5000), headers: { 'User-Agent': discoverUA(myDomain) } })
-    if (res.ok) {
-      const html = await res.text()
-      const m = html.match(/<link[^>]+type=["']application\/(rss|atom)\+xml["'][^>]+href=["']([^"']+)["']/i) ||
-                html.match(/<link[^>]+href=["']([^"']+)["'][^>]+type=["']application\/(rss|atom)\+xml["']/i)
-      if (m) {
-        const href = m[2] || m[1]
-        if (href.startsWith('http')) return href
-        return `https://${domain}${href.startsWith('/') ? '' : '/'}${href}`
-      }
-    }
-  } catch {}
-  for (const p of ['/feed', '/rss', '/atom.xml', '/feed.xml', '/rss.xml', '/index.xml']) {
-    try {
-      const res = await fetch(`https://${domain}${p}`, { signal: AbortSignal.timeout(4000), headers: { 'User-Agent': discoverUA(myDomain) } })
-      if (!res.ok) continue
-      const ct = res.headers.get('content-type') || ''
-      if (ct.includes('xml') || ct.includes('rss') || ct.includes('atom')) return `https://${domain}${p}`
-    } catch {}
+// probes are mostly waiting on the network, not cpu, so this can be
+// generous - a wall of feedless news sites shouldn't take a week to clear
+export const PROBES_PER_RUN = 10
+
+// Reads just the start of a response - enough to see <rss or <feed - then
+// hangs up, so a probe never downloads someone's whole homepage twice
+const peek = async (res, maxBytes = 8192) => {
+  const reader = res.body?.getReader()
+  if (!reader) return ''
+  let text = ''
+  const decoder = new TextDecoder()
+  while (text.length < maxBytes) {
+    const { done, value } = await reader.read()
+    if (done) break
+    text += decoder.decode(value, { stream: true })
+  }
+  await reader.cancel().catch(() => {})
+  return text
+}
+
+const looksLikeFeed = text => /<(rss|feed|rdf:RDF)[\s>]/i.test(text)
+
+// A <link> tag's attributes come in any order - matching type-then-href as
+// one regex swapped its groups for href-then-type pages and "found" feeds
+// at https://site/rss that were never there.
+export const findFeedLink = (html, base) => {
+  for (const [tag] of html.matchAll(/<link\b[^>]*>/gi)) {
+    if (!/type=["']application\/(rss|atom)\+xml["']/i.test(tag)) continue
+    const href = tag.match(/href=["']([^"']+)["']/i)?.[1]
+    if (!href) continue
+    try { return new URL(href.replace(/&amp;/g, '&'), base).href } catch {}
   }
   return null
 }
 
-export const buildCurateCandidates = async (db, sourceUrls, freshData, _probe = probeFeedUrl, myDomain) => {
+// Every answer is checked by reading it: a content-type saying "xml" isn't
+// proof (app pages and error pages say it too - play.google.com/atom.xml).
+export const probeFeedUrl = async (domain, myDomain, _fetch = fetch) => {
+  const get = (url, ms) => _fetch(url, { signal: AbortSignal.timeout(ms), headers: { 'User-Agent': discoverUA(myDomain) } })
+  const isFeed = async (url) => {
+    try {
+      const res = await get(url, 4000)
+      return res.ok && looksLikeFeed(await peek(res))
+    } catch { return false }
+  }
+  try {
+    const res = await get(`https://${domain}`, 5000)
+    if (res.ok) {
+      const declared = findFeedLink(await res.text(), `https://${domain}/`)
+      if (declared && await isFeed(declared)) return declared
+    }
+  } catch {}
+  for (const p of ['/feed', '/rss', '/atom.xml', '/feed.xml', '/rss.xml', '/index.xml']) {
+    if (await isFeed(`https://${domain}${p}`)) return `https://${domain}${p}`
+  }
+  return null
+}
+
+const PROBE_RETRY_MS = 30 * 86400000
+
+// Fewest votes first. One or two of your blogs linking someone is a friend
+// or a find; 3+ is overwhelmingly a magazine, a platform or a hot take.
+// Ties go newest first so fresh singletons rotate through.
+const quietFirst = (a, b) => (a.score - b.score) || String(b.firstSeen || '').localeCompare(String(a.firstSeen || ''))
+
+const host = u => { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return '' } }
+
+// site url, else where its posts live, else the feed's own host
+export const blogDomain = (feedUrl, data) =>
+  host(data?.siteUrl) || host(data?.posts?.find(p => p.url)?.url) || host(feedUrl)
+
+// a vote is a blog, not a feed - one blog curated twice (posts + podcast)
+// is still one person vouching. votes are stored as blog domains; older
+// rows hold feed urls, so both spellings land on the same key
+const voters = sources => new Set(sources.map(s => host(s) || s)).size
+
+export const buildCurateCandidates = async (db, sourceUrls, freshData, _probe = probeFeedUrl, myDomain, _random = Math.random) => {
   if (!freshData.size) return
 
   const knownDomains = new Set()
   for (const url of sourceUrls) {
     try { knownDomains.add(new URL(url).hostname.replace(/^www\./, '')) } catch {}
   }
+  // a feed on feedburner/feedpress isn't the blog - the blog is where its
+  // site and posts live. without this every feedburner blog was one voter,
+  // and a curated blog could show up as a candidate for itself
+  for (const [url, data] of freshData) knownDomains.add(blogDomain(url, data))
 
   const dismissed = new Set(await getDismissedDomains(db))
+  const blocked = await getBlocked(db)
+  const isOut = domain => !domain || SKIP_CURATE_DOMAINS.has(domain) || dismissed.has(domain) || isUrlBlocked(`https://${domain}`, blocked)
   const domainSources = new Map()
 
   for (const [sourceUrl, data] of freshData) {
     if (!data?.posts?.length) continue
-    let fromDomain
-    try { fromDomain = new URL(sourceUrl).hostname.replace(/^www\./, '') } catch { continue }
+    const fromDomain = blogDomain(sourceUrl, data)
+    if (!fromDomain) continue
     for (const post of data.posts) {
       if (!post.content) continue
       for (const [, href] of post.content.matchAll(/href=["']([^"']+)["']/g)) {
         try {
-          const domain = new URL(href).hostname.replace(/^www\./, '')
+          const link = new URL(href)
+          // mailto:, tel: and friends parse fine with no hostname - all of them
+          // were scoring as one domain called "" (26 votes, top of the queue)
+          if (link.protocol !== 'http:' && link.protocol !== 'https:') continue
+          const domain = link.hostname.replace(/^www\./, '')
           if (domain === fromDomain) continue
           if (VIDEO_DOMAINS.has(domain) || SKIP_CURATE_DOMAINS.has(domain)) continue
-          if (knownDomains.has(domain) || dismissed.has(domain)) continue
+          if (knownDomains.has(domain) || isOut(domain)) continue
           if (!domainSources.has(domain)) domainSources.set(domain, new Set())
-          domainSources.get(domain).add(sourceUrl)
+          domainSources.get(domain).add(fromDomain)
         } catch {}
       }
     }
@@ -292,38 +360,63 @@ export const buildCurateCandidates = async (db, sourceUrls, freshData, _probe = 
   if (!domainSources.size) return
 
   const scored = [...domainSources.entries()]
-    .map(([domain, srcs]) => ({ domain, score: srcs.size, sources: [...srcs] }))
-    .sort((a, b) => b.score - a.score)
+    .map(([domain, srcs]) => ({ domain, score: voters([...srcs]), sources: [...srcs] }))
+  // shuffle, then a stable sort: ties land in random order. without it,
+  // singletons came out in scan order and one prolific linker's list ate
+  // every probe turn
+  for (let i = scored.length - 1; i > 0; i--) {
+    const j = Math.floor(_random() * (i + 1));
+    [scored[i], scored[j]] = [scored[j], scored[i]]
+  }
+  scored.sort(quietFirst)
 
-  const candidates = await getCandidates(db)
-  const candidateDomains = new Set(candidates.map(c => c.domain))
+  // blocked, dismissed or skip-listed after it became a candidate - drop it now
+  const candidates = (await getCandidates(db)).filter(c => !isOut(c.domain))
 
   for (const entry of candidates) {
     const srcs = domainSources.get(entry.domain)
     if (srcs) {
-      entry.score = Math.max(entry.score, srcs.size)
-      entry.sources = [...new Set([...entry.sources, ...srcs])]
+      // combined, not the best single scan - one blog this week and another
+      // next week is two votes, even if they never share a feed window
+      // old rows stored feed urls, which double-count a feedburner blog
+      // next to its real domain - the rescan re-finds them by domain
+      const kept = entry.sources.filter(s => !s.includes('://'))
+      entry.sources = [...new Set([...kept, ...srcs])]
+      entry.score = voters(entry.sources)
     }
   }
 
   const now = new Date().toISOString()
-  const newToProbe = scored.filter(({ domain }) => !candidateDomains.has(domain)).slice(0, 3)
+  // a failed probe is remembered as a row with no feed - without that, the
+  // same top 3 feedless domains (bsky.app and friends) got re-probed every
+  // run and nothing behind them ever got a turn. failures retry after a month.
+  const live = candidates.filter(c => c.feedUrl || (Date.now() - Date.parse(c.probedAt || 0)) < PROBE_RETRY_MS)
+  const tried = new Set(live.map(c => c.domain))
+  const newToProbe = scored.filter(({ domain }) => !tried.has(domain)).slice(0, PROBES_PER_RUN)
 
   for (const { domain, score, sources } of newToProbe) {
     const feedUrl = await _probe(domain, myDomain)
-    if (feedUrl) candidates.push({ domain, score, sources, firstSeen: now, probedAt: now, feedUrl })
+    live.push({ domain, score, sources, firstSeen: now, probedAt: now, feedUrl: feedUrl || null })
   }
 
-  candidates.sort((a, b) => b.score - a.score)
-  await saveCandidates(db, candidates.slice(0, 50))
+  const found = live.filter(c => c.feedUrl).sort(quietFirst).slice(0, 50)
+  const failed = live.filter(c => !c.feedUrl).sort(quietFirst).slice(0, 100)
+  await saveCandidates(db, [...found, ...failed])
 }
 
-export const pruneCurators = async (db) => {
-  const curators = await listCurators(db)
-  const inactive = curators.filter(c => isCuratorInactive(c))
-  if (!inactive.length) return { pruned: 0 }
-  await Promise.all(inactive.map(c => deleteCurator(db, c.pubkey)))
-  return { pruned: inactive.length }
+// Daily, not every run: it scores against every source's stored posts (the
+// cron's 24 fresh feeds alone would make every overlap look like 1), so it's
+// the heaviest pass here, and suggestions don't need to be hourly.
+const CURATE_EVERY_MS = 86400000
+
+export const maybeBuildCurateCandidates = async (db, allSourceUrls, freshData, myDomain, _probe = probeFeedUrl, now = Date.now()) => {
+  const last = await getCronState(db, 'curate:lastRun')
+  if (last && now - Date.parse(last) < CURATE_EVERY_MS) return false
+  const stored = await getSourceDataBulk(db, allSourceUrls.filter(u => !freshData.has(u)))
+  const all = new Map([...stored, ...freshData])
+  await buildCurateCandidates(db, allSourceUrls, all, _probe, myDomain)
+  await setCronState(db, 'curate:lastRun', new Date(now).toISOString())
+  return true
 }
 
 const BATCH_SIZE = 24
@@ -386,7 +479,7 @@ export const checkDiscoverFeeds = async (env) => {
 
   const allSourceUrls = await getAllSourceUrls(db)
   await buildLinkGraph(db, allSourceUrls, freshData).catch(err => console.error('buildLinkGraph failed:', err))
-  await pruneCurators(db).catch(err => console.error('pruneCurators failed:', err))
+  await maybeBuildCurateCandidates(db, allSourceUrls, freshData, env.DOMAIN_NAME).catch(err => console.error('buildCurateCandidates failed:', err))
 
   await Promise.all([
     setCronState(db, 'cron:lastOk', new Date().toISOString()),

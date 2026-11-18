@@ -41,7 +41,8 @@ export const handleWebping = async (db) => {
 // GET /api/discover/admin/curate
 export const handleCurateGet = async (db) => {
   const [pending, candidates] = await Promise.all([getPending(db), getCandidates(db)])
-  return json({ pending, candidates })
+  // rows with no feed are remembered failed probes, not suggestions
+  return json({ pending, candidates: candidates.filter(c => c.feedUrl) })
 }
 
 // POST /api/discover/admin/curate/approve

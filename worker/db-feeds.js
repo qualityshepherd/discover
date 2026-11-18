@@ -20,9 +20,6 @@ const rowToFeed = (row, sources = []) => {
     lastUpdated: row.last_updated || null,
     previewPosts: row.preview_posts ? JSON.parse(row.preview_posts) : undefined,
     failStreak: row.fail_streak || 0,
-    curatorPubkey: row.curator_pubkey || undefined,
-    curatorName: row.curator_name || undefined,
-    curatorUrl: row.curator_url || undefined,
     addedAt: row.added_at,
     sources
   }
@@ -82,15 +79,15 @@ export const saveFeed = async (db, feed, { syncChildren = true } = {}) => {
   const {
     id, slug, title, description, type, tags, coverImage, ownerPubkey, featured, imports,
     active, updateFrequency, lastChecked, lastUpdated, previewPosts, failStreak,
-    curatorPubkey, curatorName, curatorUrl, addedAt, sources = []
+    addedAt, sources = []
   } = feed
 
   await db.prepare(`
     INSERT INTO feeds
       (id, slug, title, description, type, tags, cover_image, owner_pubkey, featured, imports,
        active, update_frequency, last_checked, last_updated, preview_posts, fail_streak,
-       curator_pubkey, curator_name, curator_url, added_at, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+       added_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
       slug=excluded.slug,
       title=excluded.title, description=excluded.description, type=excluded.type,
@@ -99,8 +96,7 @@ export const saveFeed = async (db, feed, { syncChildren = true } = {}) => {
       active=excluded.active, update_frequency=excluded.update_frequency,
       last_checked=excluded.last_checked, last_updated=excluded.last_updated,
       preview_posts=excluded.preview_posts, fail_streak=excluded.fail_streak,
-      curator_pubkey=excluded.curator_pubkey, curator_name=excluded.curator_name,
-      curator_url=excluded.curator_url, updated_at=datetime('now')
+      updated_at=datetime('now')
   `).bind(
     id, slug || null, title, description || null, type || null,
     JSON.stringify(tags || []),
@@ -109,7 +105,7 @@ export const saveFeed = async (db, feed, { syncChildren = true } = {}) => {
     featured ? 1 : 0, imports || 0, active !== false ? 1 : 0,
     updateFrequency || null, lastChecked || null, lastUpdated || null,
     previewPosts ? JSON.stringify(previewPosts) : null,
-    failStreak || 0, curatorPubkey || null, curatorName || null, curatorUrl || null,
+    failStreak || 0,
     addedAt || new Date().toISOString()
   ).run()
 

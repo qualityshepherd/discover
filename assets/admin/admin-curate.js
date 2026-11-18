@@ -108,6 +108,11 @@ function renderPending (list, playlists) {
   })
 }
 
+// which curated blogs vouched for it - the why behind the score
+const linkedBy = (sources = []) => [...new Set(sources.map(u => {
+  try { return new URL(u).hostname.replace(/^www\./, '') } catch { return u }
+}))].map(escHtml).join(', ')
+
 function renderCandidates (list) {
   const el = $('curate-candidates-list')
   const countEl = $('curate-candidates-count')
@@ -116,12 +121,13 @@ function renderCandidates (list) {
   if (!list.length) { el.innerHTML = '<p class="muted" style="font-size:var(--text-sm)">no candidates yet — check back after the next cron run.</p>'; return }
 
   el.innerHTML = list.map(c => `
-    <div class="dc-pending-row" data-domain="${escHtml(c.domain)}">
+    <div class="dc-pending-row" data-domain="${escHtml(c.domain)}" data-feed-url="${escHtml(c.feedUrl)}">
       <div class="dc-pending-url">
         <a href="https://${escHtml(c.domain)}" target="_blank" rel="noopener">${escHtml(c.domain)}</a>
         <span class="dc-badge">${c.score} source${c.score !== 1 ? 's' : ''}</span>
       </div>
       <div class="dc-pending-meta"><a href="${escHtml(c.feedUrl)}" target="_blank" rel="noopener">${escHtml(c.feedUrl)}</a></div>
+      <div class="dc-pending-meta">linked by ${linkedBy(c.sources)}</div>
       <div class="dc-pending-actions">
         <button class="btn btn-sm btn-primary curate-approve">→ suggested</button>
         <button class="btn btn-sm btn-danger curate-dismiss">dismiss</button>
@@ -133,7 +139,7 @@ function renderCandidates (list) {
     const row = btn.closest('[data-domain]')
     btn.addEventListener('click', async () => {
       const domain = row.dataset.domain
-      const feedUrl = row.querySelector('.dc-pending-meta').textContent
+      const feedUrl = row.dataset.feedUrl
       btn.disabled = true
       const res = await api('POST', '/api/discover/admin/curate/approve', { domain, feedUrl })
       if (res.error) { alert(res.error); btn.disabled = false; return }

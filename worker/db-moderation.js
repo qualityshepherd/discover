@@ -41,7 +41,8 @@ export const isBlocked = async (db, sources) => {
 // Curate candidates / dismissed domains
 
 export const getCandidates = async (db) => {
-  const rows = await db.prepare('SELECT * FROM curate_candidates ORDER BY score DESC').all()
+  // quiet first - see quietFirst in discover-cron.js
+  const rows = await db.prepare('SELECT * FROM curate_candidates ORDER BY score ASC, first_seen DESC').all()
   return rows.results.map(r => ({
     domain: r.domain,
     score: r.score,
@@ -52,14 +53,31 @@ export const getCandidates = async (db) => {
   }))
 }
 
+// Diffs against what's stored instead of wipe-and-rewrite: the daily cron
+// calls this, and rewriting 150 rows (plus the PK index) to change two of
+// them was ~600 writes for nothing. Same shape as saveMentions.
+// Callers cap the list - buildCurateCandidates keeps 50 found + 100 failed.
 export const saveCandidates = async (db, list) => {
-  const stmts = [db.prepare('DELETE FROM curate_candidates')]
-  for (const c of list.slice(0, 50)) {
-    stmts.push(db.prepare(
-      'INSERT INTO curate_candidates (domain, score, sources, first_seen, probed_at, feed_url) VALUES (?,?,?,?,?,?)'
-    ).bind(c.domain, c.score, JSON.stringify(c.sources || []), c.firstSeen || null, c.probedAt || null, c.feedUrl || null))
+  const stored = new Map((await getCandidates(db)).map(c => [c.domain, c]))
+  const row = c => [c.score, JSON.stringify(c.sources || []), c.firstSeen || null, c.probedAt || null, c.feedUrl || null]
+  const wanted = new Map(list.map(c => [c.domain, c]))
+  const stmts = []
+  for (const domain of stored.keys()) {
+    if (!wanted.has(domain)) stmts.push(db.prepare('DELETE FROM curate_candidates WHERE domain=?').bind(domain))
   }
-  await db.batch(stmts)
+  for (const [domain, c] of wanted) {
+    const prev = stored.get(domain)
+    if (!prev) {
+      stmts.push(db.prepare(
+        'INSERT INTO curate_candidates (domain, score, sources, first_seen, probed_at, feed_url) VALUES (?,?,?,?,?,?)'
+      ).bind(domain, ...row(c)))
+    } else if (JSON.stringify(row(prev)) !== JSON.stringify(row(c))) {
+      stmts.push(db.prepare(
+        'UPDATE curate_candidates SET score=?, sources=?, first_seen=?, probed_at=?, feed_url=? WHERE domain=?'
+      ).bind(...row(c), domain))
+    }
+  }
+  if (stmts.length) await db.batch(stmts)
 }
 
 export const getDismissedDomains = async (db) => {

@@ -5,13 +5,11 @@ import {
   computeTags, getFeed, saveFeed, getFeeds, getFilteredFeeds, getTagCounts,
   getNewestSourcePosts, getRandomSourcePosts, isFeedSource, backfillSlugs
 } from './db-feeds.js'
-import { isCuratorOf, shouldUpdateLastSeen, getCurator, saveCurator } from './db-curators.js'
 import { isBlocked, getPending, savePending, getBlocked } from './db-moderation.js'
 import { getMentions, getMentionsForUrl, getSourceMentionCounts } from './db-mentions.js'
 import { getCronState, getRateLimit, setRateLimit } from './db-auth.js'
 import { searchSources, getTagCloud, getPostsByTag } from './db-search.js'
 import { checkDiscoverFeeds, computeFrequency, fetchSource, findImage, buildLinkGraph, buildCurateCandidates } from './discover-cron.js'
-import { handleCuratorList, handleCuratorInvite, handleCuratorRevoke } from './discover-admin-curators.js'
 import {
   handleValidate, handlePendingReject, handlePendingList, handleApprove,
   handleAdd, handleEdit, handleDelete,
@@ -222,66 +220,40 @@ export const handleDiscover = async (req, env, ctx) => {
   const rssMatch = path.match(/^\/api\/discover\/([^/]+)\/rss$/)
   if (rssMatch && method === 'GET') return handlePlaylistRss(db, rssMatch[1], req.url)
 
-  // Admin routes — owner or curator
+  // Admin routes - owner only. There used to be per-playlist curators too;
+  // nobody was ever invited, so that whole auth path is gone.
   const token = req.headers?.get('authorization')?.replace('Bearer ', '')
   const pubkey = await memberByToken(token, db)
-  if (!pubkey) return json({ error: 'unauthorized' }, 401)
-  const isOwner = isOwnerPubkey(pubkey, env)
-  const curator = !isOwner ? await getCurator(db, pubkey) : null
-  if (!isOwner && !curator) return json({ error: 'unauthorized' }, 401)
+  if (!pubkey || !isOwnerPubkey(pubkey, env)) return json({ error: 'unauthorized' }, 401)
 
-  if (curator && shouldUpdateLastSeen(curator)) {
-    await saveCurator(db, pubkey, { ...curator, lastSeen: new Date().toISOString() })
-  }
-
-  // Routes accessible to curators (own playlist only)
   const playlistSourceMatch = path.match(/^\/api\/discover\/admin\/([^/]+)\/sources$/)
   if (playlistSourceMatch) {
     const id = playlistSourceMatch[1]
-    if (!isOwner && !isCuratorOf(curator, id)) return json({ error: 'unauthorized' }, 401)
     if (method === 'POST') return handlePlaylistSourceAdd(req, db, id, env.DOMAIN_NAME)
     if (method === 'DELETE') return handlePlaylistSourceRemove(req, db, id)
   }
 
-  if (method === 'POST' && path === '/api/discover/admin/source/refresh') {
-    if (!isOwner) return json({ error: 'unauthorized' }, 401)
-    return handleSourceRefresh(req, db, env.DOMAIN_NAME)
-  }
+  if (method === 'POST' && path === '/api/discover/admin/source/refresh') return handleSourceRefresh(req, db, env.DOMAIN_NAME)
 
   const playlistRefreshMatch = path.match(/^\/api\/discover\/admin\/([^/]+)\/refresh$/)
   if (playlistRefreshMatch && method === 'POST') {
-    const id = playlistRefreshMatch[1]
-    if (!isOwner && !isCuratorOf(curator, id)) return json({ error: 'unauthorized' }, 401)
-    return handlePlaylistRefresh(db, id, env.DOMAIN_NAME)
+    return handlePlaylistRefresh(db, playlistRefreshMatch[1], env.DOMAIN_NAME)
   }
 
   // Specific PATCH/DELETE paths that would otherwise match the /admin/:id playlist catch-all
   if (path === '/api/discover/admin/source') {
-    if (!isOwner) return json({ error: 'unauthorized' }, 401)
     if (method === 'PATCH') return handleSourceEdit(req, db, env.DOMAIN_NAME)
     if (method === 'DELETE') return handleSourceDelete(req, db)
   }
-  if (method === 'DELETE' && path === '/api/discover/admin/pending') {
-    if (!isOwner) return json({ error: 'unauthorized' }, 401)
-    return handlePendingReject(req, db)
-  }
+  if (method === 'DELETE' && path === '/api/discover/admin/pending') return handlePendingReject(req, db)
 
   // Catch-all for playlist PATCH/DELETE — specific paths above must come first
   const adminIdMatch = path.match(/^\/api\/discover\/admin\/([^/]+)$/)
   if (adminIdMatch) {
     const id = adminIdMatch[1]
-    if (method === 'PATCH') {
-      if (!isOwner && !isCuratorOf(curator, id)) return json({ error: 'unauthorized' }, 401)
-      return handleEdit(req, db, id)
-    }
-    if (method === 'DELETE') {
-      if (!isOwner) return json({ error: 'unauthorized' }, 401)
-      return handleDelete(db, id)
-    }
+    if (method === 'PATCH') return handleEdit(req, db, id)
+    if (method === 'DELETE') return handleDelete(db, id)
   }
-
-  // Owner-only routes
-  if (!isOwner) return json({ error: 'unauthorized' }, 401)
 
   if (method === 'GET' && path === '/api/discover/admin/curate') return handleCurateGet(db)
   if (method === 'POST' && path === '/api/discover/admin/curate/approve') return handleCurateApprove(req, db)
@@ -345,12 +317,6 @@ export const handleDiscover = async (req, env, ctx) => {
     await Promise.all(feeds.map(f => saveFeed(db, f)))
     return json({ ok: true, reset: feeds.length })
   }
-
-  // Curator management
-  if (method === 'GET' && path === '/api/discover/admin/curator') return handleCuratorList(db)
-  if (method === 'POST' && path === '/api/discover/admin/curator/invite') return handleCuratorInvite(req, db)
-  const curatorPubkeyMatch = path.match(/^\/api\/discover\/admin\/curator\/([^/]+)$/)
-  if (curatorPubkeyMatch && method === 'DELETE') return handleCuratorRevoke(db, curatorPubkeyMatch[1])
 
   // Backup download
   if (method === 'GET' && path === '/api/discover/admin/backup') {

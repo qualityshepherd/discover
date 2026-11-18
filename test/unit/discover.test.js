@@ -1,9 +1,8 @@
 import { unit as test } from '../testpup.js'
 import { computeFrequency, makeId, computeTags } from '../../worker/discover.js'
 import { isClickThrough } from '../../worker/utils.js'
-import { buildCurateCandidates, readLimitedText } from '../../worker/discover-cron.js'
+import { buildCurateCandidates, maybeBuildCurateCandidates, readLimitedText, PROBES_PER_RUN, blogDomain, findFeedLink, probeFeedUrl } from '../../worker/discover-cron.js'
 import { isBlocked, isUrlBlocked, getCandidates } from '../../worker/db-moderation.js'
-import { isCuratorOf, shouldUpdateLastSeen, isCuratorInactive } from '../../worker/db-curators.js'
 
 // isBlocked
 //
@@ -152,52 +151,6 @@ test('computeFrequency: exactly 8 posts returns weekly', t => {
   t.is(computeFrequency(posts), 'weekly')
 })
 
-// isCuratorOf
-
-test('isCuratorOf: true when playlistId matches', t => {
-  t.ok(isCuratorOf({ playlistId: 'abc' }, 'abc'))
-})
-
-test('isCuratorOf: false when playlistId differs', t => {
-  t.falsy(isCuratorOf({ playlistId: 'abc' }, 'xyz'))
-})
-
-test('isCuratorOf: false for null curator', t => {
-  t.falsy(isCuratorOf(null, 'abc'))
-})
-
-// shouldUpdateLastSeen
-
-test('shouldUpdateLastSeen: true when lastSeen never set', t => {
-  t.ok(shouldUpdateLastSeen({}))
-})
-
-test('shouldUpdateLastSeen: true when lastSeen > 24hrs ago', t => {
-  const ts = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString()
-  t.ok(shouldUpdateLastSeen({ lastSeen: ts }))
-})
-
-test('shouldUpdateLastSeen: false when lastSeen < 24hrs ago', t => {
-  const ts = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString()
-  t.falsy(shouldUpdateLastSeen({ lastSeen: ts }))
-})
-
-// isCuratorInactive
-
-test('isCuratorInactive: true when lastSeen > 180 days ago', t => {
-  const ts = new Date(Date.now() - 181 * 24 * 60 * 60 * 1000).toISOString()
-  t.ok(isCuratorInactive({ lastSeen: ts }))
-})
-
-test('isCuratorInactive: false when lastSeen recent', t => {
-  const ts = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
-  t.falsy(isCuratorInactive({ lastSeen: ts }))
-})
-
-test('isCuratorInactive: false when no lastSeen', t => {
-  t.falsy(isCuratorInactive({}))
-})
-
 // isClickThrough
 
 test('isClickThrough: false for empty/null posts', t => {
@@ -268,19 +221,22 @@ const makeFreshData = (entries) => new Map(
 )
 
 // Minimal D1 mock supporting what getCandidates/getDismissedDomains/saveCandidates need
-const makeDb = ({ candidates: initCandidates = [], dismissed: initDismissed = [] } = {}) => {
+const makeDb = ({ candidates: initCandidates = [], dismissed: initDismissed = [], blocked: initBlocked = [] } = {}) => {
   let rows = initCandidates.map(c => ({ ...c }))
   const dismissed = new Set(initDismissed)
 
   const makeStmt = (sql, args = []) => ({
     bind: (...a) => makeStmt(sql, a),
     all: async () => {
+      if (sql.includes('FROM blocked')) {
+        return { results: initBlocked.map(d => ({ domain: d })) }
+      }
       if (sql.includes('FROM dismissed_domains')) {
         return { results: [...dismissed].map(d => ({ domain: d })) }
       }
       if (sql.includes('FROM curate_candidates')) {
         return {
-          results: [...rows].sort((a, b) => b.score - a.score).map(c => ({
+          results: [...rows].sort((a, b) => a.score - b.score).map(c => ({
             domain: c.domain,
             score: c.score || 0,
             sources: JSON.stringify(c.sources || []),
@@ -294,17 +250,25 @@ const makeDb = ({ candidates: initCandidates = [], dismissed: initDismissed = []
     },
     first: async () => null,
     run: async () => {
-      if (sql.includes('DELETE FROM curate_candidates')) { rows = [] } else if (sql.includes('INSERT INTO curate_candidates')) {
+      if (sql.includes('curate_candidates')) db.writes++
+      if (sql.includes('DELETE FROM curate_candidates')) {
+        rows = rows.filter(r => r.domain !== args[0])
+      } else if (sql.includes('INSERT INTO curate_candidates')) {
         const [domain, score, sourcesJson, firstSeen, probedAt, feedUrl] = args
         rows.push({ domain, score, sources: JSON.parse(sourcesJson || '[]'), firstSeen, probedAt, feedUrl })
+      } else if (sql.includes('UPDATE curate_candidates')) {
+        const [score, sourcesJson, firstSeen, probedAt, feedUrl, domain] = args
+        rows = rows.map(r => r.domain === domain ? { domain, score, sources: JSON.parse(sourcesJson || '[]'), firstSeen, probedAt, feedUrl } : r)
       }
     }
   })
 
-  return {
+  const db = {
+    writes: 0,
     prepare: sql => makeStmt(sql),
     batch: async stmts => { for (const s of stmts) await s.run() }
   }
+  return db
 }
 
 test('buildCurateCandidates: does nothing with empty freshData', async t => {
@@ -378,9 +342,9 @@ test('buildCurateCandidates: probe returning feed url goes to candidates', async
   t.is(entry.feedUrl, 'https://found.example.com/feed')
 })
 
-test('buildCurateCandidates: limits new probes to 3', async t => {
+test('buildCurateCandidates: limits new probes per run', async t => {
   const db = makeDb()
-  const domains = ['alpha.com', 'beta.com', 'gamma.com', 'delta.com', 'epsilon.com']
+  const domains = Array.from({ length: PROBES_PER_RUN + 2 }, (_, i) => `blog${i}.com`)
   const freshData = makeFreshData(
     domains.flatMap(d => [
       [`https://src1-${d}/feed`, [`https://${d}/post`]],
@@ -389,12 +353,12 @@ test('buildCurateCandidates: limits new probes to 3', async t => {
   )
   await buildCurateCandidates(db, [], freshData, feedProbe)
   const candidates = await getCandidates(db)
-  t.is(candidates.length, 3)
+  t.is(candidates.length, PROBES_PER_RUN)
 })
 
 test('buildCurateCandidates: updates score for existing candidate', async t => {
   const db = makeDb({
-    candidates: [{ domain: 'known.com', feedUrl: 'https://known.com/feed', score: 1, sources: ['https://old.com/feed'] }]
+    candidates: [{ domain: 'known.com', feedUrl: 'https://known.com/feed', score: 1, sources: ['old.com'] }]
   })
   const freshData = makeFreshData([
     ['https://new1.com/feed', ['https://known.com/post']],
@@ -404,5 +368,250 @@ test('buildCurateCandidates: updates score for existing candidate', async t => {
   const candidates = await getCandidates(db)
   const entry = candidates.find(c => c.domain === 'known.com')
   t.ok(entry)
+  // old.com from an earlier scan plus new1 and new2 now - votes add up
+  t.is(entry.score, 3)
+})
+
+test('buildCurateCandidates: a failed probe is remembered, so the next domain gets a turn', async t => {
+  const db = makeDb()
+  const domains = ['alpha.com', 'beta.com', 'gamma.com', 'delta.com']
+  const freshData = makeFreshData(
+    domains.flatMap(d => [
+      [`https://src1-${d}/feed`, [`https://${d}/post`]],
+      [`https://src2-${d}/feed`, [`https://${d}/other`]]
+    ])
+  )
+  const probed = []
+  const probe = async domain => { probed.push(domain); return domain === 'delta.com' ? 'https://delta.com/feed' : null }
+  await buildCurateCandidates(db, [], freshData, probe)
+  await buildCurateCandidates(db, [], freshData, probe)
+  // first run burns 3 feedless domains, second run reaches the 4th
+  t.is(probed.length, 4)
+  t.ok(probed.includes('delta.com'))
+  const found = (await getCandidates(db)).filter(c => c.feedUrl)
+  t.is(found.length, 1)
+  t.is(found[0].domain, 'delta.com')
+})
+
+test('buildCurateCandidates: failed probes retry after a month', async t => {
+  const old = new Date(Date.now() - 31 * 86400000).toISOString()
+  const db = makeDb({ candidates: [{ domain: 'late.com', score: 2, sources: [], probedAt: old, feedUrl: null }] })
+  const freshData = makeFreshData([
+    ['https://a.com/feed', ['https://late.com/post']],
+    ['https://b.com/feed', ['https://late.com/post']]
+  ])
+  await buildCurateCandidates(db, [], freshData, feedProbe)
+  const entry = (await getCandidates(db)).find(c => c.domain === 'late.com')
+  t.is(entry.feedUrl, 'https://found.example.com/feed')
+})
+
+test('saveCandidates: a run that changes nothing writes nothing', async t => {
+  const db = makeDb()
+  const freshData = makeFreshData([
+    ['https://a.com/feed', ['https://quiet.com/post']],
+    ['https://b.com/feed', ['https://quiet.com/post']]
+  ])
+  await buildCurateCandidates(db, [], freshData, feedProbe)
+  const before = db.writes
+  await buildCurateCandidates(db, [], freshData, feedProbe)
+  t.is(db.writes, before)
+})
+
+test('buildCurateCandidates: votes add up across scans that never overlap', async t => {
+  const db = makeDb()
+  await buildCurateCandidates(db, [], makeFreshData([['https://a.com/feed', ['https://quiet.com/post']]]), feedProbe)
+  await buildCurateCandidates(db, [], makeFreshData([['https://b.com/feed', ['https://quiet.com/post']]]), feedProbe)
+  t.is((await getCandidates(db)).find(c => c.domain === 'quiet.com').score, 2)
+})
+
+test('maybeBuildCurateCandidates: runs at most once a day', async t => {
+  const state = new Map()
+  const base = makeDb()
+  const db = {
+    ...base,
+    prepare: sql => {
+      if (sql.includes('settings') || sql.includes('FROM sources')) {
+        return {
+          bind: (...a) => ({
+            first: async () => (sql.includes('SELECT') && state.has(a[0])) ? { value: state.get(a[0]) } : null,
+            run: async () => { if (/INSERT|UPDATE/.test(sql)) state.set(a[0], a[1]) },
+            all: async () => ({ results: [] })
+          })
+        }
+      }
+      return base.prepare(sql)
+    }
+  }
+  const fresh = makeFreshData([['https://a.com/feed', ['https://quiet.com/post']]])
+  const now = Date.UTC(2026, 10, 18)
+  t.is(await maybeBuildCurateCandidates(db, ['https://a.com/feed', 'https://b.com/feed'], fresh, 'x', feedProbe, now), true)
+  t.is(await maybeBuildCurateCandidates(db, [], fresh, 'x', feedProbe, now + 3600000), false)
+  t.is(await maybeBuildCurateCandidates(db, [], fresh, 'x', feedProbe, now + 86400000), true)
+})
+
+test('buildCurateCandidates: one blog with two curated feeds is one vote', async t => {
+  const db = makeDb()
+  const freshData = makeFreshData([
+    ['https://manu.com/feed', ['https://quiet.com/post']],
+    ['https://manu.com/podcast.xml', ['https://quiet.com/post']]
+  ])
+  await buildCurateCandidates(db, [], freshData, feedProbe)
+  t.is((await getCandidates(db)).find(c => c.domain === 'quiet.com').score, 1)
+})
+
+test('buildCurateCandidates: blocked domains never become candidates', async t => {
+  const db = makeDb({ blocked: ['spam.com'] })
+  const freshData = makeFreshData([
+    ['https://a.com/feed', ['https://sub.spam.com/post']],
+    ['https://b.com/feed', ['https://sub.spam.com/post']]
+  ])
+  await buildCurateCandidates(db, [], freshData, feedProbe)
+  t.is((await getCandidates(db)).length, 0)
+})
+
+test('buildCurateCandidates: blocking an existing candidate drops it', async t => {
+  const db = makeDb({
+    blocked: ['gone.com'],
+    candidates: [{ domain: 'gone.com', score: 2, sources: [], feedUrl: 'https://gone.com/feed' }]
+  })
+  const freshData = makeFreshData([['https://a.com/feed', ['https://other.com/post']]])
+  await buildCurateCandidates(db, [], freshData, noProbe)
+  t.ok(!(await getCandidates(db)).find(c => c.domain === 'gone.com'))
+})
+
+test('buildCurateCandidates: mailto and other non-web links are not votes', async t => {
+  const db = makeDb()
+  const probed = []
+  const freshData = makeFreshData([
+    ['https://a.com/feed', ['mailto:me@a.com', 'tel:555', 'https://real.com/post']],
+    ['https://b.com/feed', ['mailto:you@b.com', 'https://real.com/post']]
+  ])
+  await buildCurateCandidates(db, [], freshData, async d => { probed.push(d); return null })
+  t.is(probed.join(), 'real.com')
+})
+
+test('buildCurateCandidates: platform roots are skipped, blogs on them are not', async t => {
+  const db = makeDb()
+  const probed = []
+  const freshData = makeFreshData([
+    ['https://a.com/feed', ['https://substack.com/x', 'https://medium.com/@x', 'https://someone.substack.com/p/y']],
+    ['https://b.com/feed', ['https://substack.com/x', 'https://someone.substack.com/p/z']]
+  ])
+  await buildCurateCandidates(db, [], freshData, async d => { probed.push(d); return null })
+  t.is(probed.join(), 'someone.substack.com')
+})
+
+test('buildCurateCandidates: stored rows that are now skip-listed get cleaned out', async t => {
+  const recent = new Date().toISOString()
+  const db = makeDb({
+    candidates: [
+      { domain: '', score: 26, sources: [], probedAt: recent, feedUrl: null },
+      { domain: 'medium.com', score: 13, sources: [], probedAt: recent, feedUrl: null }
+    ]
+  })
+  await buildCurateCandidates(db, [], makeFreshData([['https://a.com/feed', ['https://other.com/post']]]), noProbe)
+  const left = (await getCandidates(db)).map(c => c.domain)
+  t.ok(!left.includes(''))
+  t.ok(!left.includes('medium.com'))
+})
+
+test('buildCurateCandidates: blogs sharing a feed host are separate votes', async t => {
+  const db = makeDb()
+  const freshData = new Map([
+    ['https://feeds.feedburner.com/one', { siteUrl: 'https://one.blog/', posts: [makePost(['https://quiet.com/a'])] }],
+    ['https://feeds.feedburner.com/two', { siteUrl: 'https://two.blog/', posts: [makePost(['https://quiet.com/b'])] }]
+  ])
+  await buildCurateCandidates(db, [...freshData.keys()], freshData, feedProbe)
+  const entry = (await getCandidates(db)).find(c => c.domain === 'quiet.com')
   t.is(entry.score, 2)
+  t.is(entry.sources.sort().join(), 'one.blog,two.blog')
+})
+
+test('buildCurateCandidates: a curated blog on a feed host is not a candidate for itself', async t => {
+  const db = makeDb()
+  const freshData = new Map([
+    ['https://feedpress.me/mine', { siteUrl: 'https://mine.blog/', posts: [makePost(['https://other.com/x'])] }],
+    ['https://a.com/feed', { posts: [makePost(['https://mine.blog/post'])] }],
+    ['https://b.com/feed', { posts: [makePost(['https://mine.blog/post'])] }]
+  ])
+  await buildCurateCandidates(db, [...freshData.keys()], freshData, feedProbe)
+  t.ok(!(await getCandidates(db)).find(c => c.domain === 'mine.blog'))
+})
+
+test('blogDomain: site url, then post urls, then the feed itself', t => {
+  t.is(blogDomain('https://feeds.feedburner.com/x', { siteUrl: 'https://www.real.blog/' }), 'real.blog')
+  t.is(blogDomain('https://feeds.feedburner.com/x', { posts: [{ url: 'https://real.blog/p' }] }), 'real.blog')
+  t.is(blogDomain('https://real.blog/feed', {}), 'real.blog')
+})
+
+test('buildCurateCandidates: legacy feed-url votes are dropped for blog domains', async t => {
+  const db = makeDb({
+    candidates: [{ domain: 'quiet.com', feedUrl: 'https://quiet.com/feed', score: 2, sources: ['https://feeds.feedburner.com/one', 'two.blog'] }]
+  })
+  const freshData = new Map([
+    ['https://feeds.feedburner.com/one', { siteUrl: 'https://one.blog/', posts: [makePost(['https://quiet.com/a'])] }]
+  ])
+  await buildCurateCandidates(db, [...freshData.keys()], freshData, noProbe)
+  const entry = (await getCandidates(db)).find(c => c.domain === 'quiet.com')
+  t.is(entry.sources.sort().join(), 'one.blog,two.blog')
+  t.is(entry.score, 2)
+})
+
+test('findFeedLink: attribute order does not matter', t => {
+  const base = 'https://site.com/'
+  t.is(findFeedLink('<link rel="alternate" type="application/rss+xml" href="/feed.xml">', base), 'https://site.com/feed.xml')
+  t.is(findFeedLink('<link href="/atom" rel="alternate" type="application/atom+xml">', base), 'https://site.com/atom')
+  t.is(findFeedLink('<link href="https://feeds.example.com/x?a=1&amp;b=2" type="application/rss+xml">', base), 'https://feeds.example.com/x?a=1&b=2')
+  t.is(findFeedLink('<link rel="stylesheet" href="/s.css">', base), null)
+})
+
+const fakeFetch = pages => async url => {
+  const page = pages[url]
+  if (!page) return new Response('nope', { status: 404 })
+  return new Response(page.body, { status: 200, headers: { 'content-type': page.type || 'text/html' } })
+}
+
+test('probeFeedUrl: a guessed path that says xml but is not a feed is rejected', async t => {
+  const f = fakeFetch({
+    'https://app.com': { body: '<html>no feed links</html>' },
+    'https://app.com/atom.xml': { body: '<html>sign in to continue</html>', type: 'application/xhtml+xml' }
+  })
+  t.is(await probeFeedUrl('app.com', 'x', f), null)
+})
+
+test('probeFeedUrl: a declared feed is used once its body checks out', async t => {
+  const f = fakeFetch({
+    'https://blog.com': { body: '<link href="/posts.xml" type="application/rss+xml">' },
+    'https://blog.com/posts.xml': { body: '<?xml version="1.0"?><rss version="2.0"><channel>', type: 'application/rss+xml' }
+  })
+  t.is(await probeFeedUrl('blog.com', 'x', f), 'https://blog.com/posts.xml')
+})
+
+test('probeFeedUrl: falls back to a guessed path that really is a feed', async t => {
+  const f = fakeFetch({
+    'https://quiet.com': { body: '<html></html>' },
+    'https://quiet.com/index.xml': { body: '<feed xmlns="http://www.w3.org/2005/Atom">', type: 'text/xml' }
+  })
+  t.is(await probeFeedUrl('quiet.com', 'x', f), 'https://quiet.com/index.xml')
+})
+
+test('buildCurateCandidates: fewest votes get probed first', async t => {
+  const db = makeDb()
+  const freshData = makeFreshData([
+    ['https://a.com/feed', ['https://mag.com/1', 'https://friend.blog/1']],
+    ['https://b.com/feed', ['https://mag.com/2']],
+    ['https://c.com/feed', ['https://mag.com/3']]
+  ])
+  const probed = []
+  await buildCurateCandidates(db, [], freshData, async d => { probed.push(d); return null })
+  t.is(probed[0], 'friend.blog')
+})
+
+test('buildCurateCandidates: ties are shuffled, not probed in scan order', async t => {
+  const db = makeDb()
+  const freshData = makeFreshData([['https://a.com/feed', ['https://first.com/1', 'https://second.com/1', 'https://third.com/1']]])
+  const probed = []
+  await buildCurateCandidates(db, [], freshData, async d => { probed.push(d); return null }, 'x', () => 0)
+  t.not(probed[0], 'first.com')
+  t.is(probed.length, 3)
 })

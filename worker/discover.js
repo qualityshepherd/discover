@@ -384,20 +384,31 @@ export const handleMentionsForUrl = async (db, reqUrl) => {
   return res
 }
 
+// Only the newest mentions carry the other blog's full post, like any feed's
+// window. Older ones are just a link - their words stay on their site.
+export const MENTIONS_FEED_FULL = 20
+
 // GET /api/mentions/:sourceId.xml
 export const handleMentionsFeed = async (db, sourceId, reqUrl) => {
   const items = await getMentions(db, sourceId)
   const domain = sourceId
   const base = new URL(reqUrl).origin
 
-  const rssItems = items.map(m => `
+  const rssItems = items.map((m, i) => {
+    const host = xmlAttr((() => { try { return new URL(m.fromSource).hostname } catch { return m.fromSource } })())
+    const who = `<a href="${m.fromSource}">${host}</a> mentioned <a href="${m.toUrl}">${xmlAttr(domain)}</a>`
+    const body = i < MENTIONS_FEED_FULL
+      ? `<p>↩ ${who} in this post:</p>${m.fromContent || ''}`
+      : `<p>↩ ${who}. <a href="${m.fromPost}">Read it on ${host}</a></p>`
+    return `
     <item>
       <title>${xmlAttr(m.fromTitle || m.fromPost)}</title>
       <link>${xmlAttr(m.fromPost)}</link>
       <guid>${xmlAttr(m.fromPost)}</guid>
       <pubDate>${new Date(m.fromDate || m.foundAt).toUTCString()}</pubDate>
-      <description><![CDATA[<p>↩ <a href="${m.fromSource}">${xmlAttr((() => { try { return new URL(m.fromSource).hostname } catch { return m.fromSource } })())}</a> mentioned <a href="${m.toUrl}">${xmlAttr(domain)}</a> in this post:</p>${m.fromContent || ''}]]></description>
-    </item>`).join('')
+      <description><![CDATA[${body}]]></description>
+    </item>`
+  }).join('')
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">

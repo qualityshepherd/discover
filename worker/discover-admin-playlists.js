@@ -1,7 +1,6 @@
 import { json, parseJsonBody, cleanFeedUrl } from './utils.js'
-import { getSourceData, deleteSourceData } from './db-sources.js'
-import { getFeed, saveFeed, isSourceReferencedElsewhere } from './db-feeds.js'
-import { deletePostTags } from './db-search.js'
+import { getSourceData } from './db-sources.js'
+import { getFeed, saveFeed } from './db-feeds.js'
 import { fetchAndSaveSource, applySourceDatas } from './fetch-source.js'
 
 // POST /api/discover/admin/:id/sources
@@ -61,17 +60,14 @@ export const handlePlaylistSourceRemove = async (req, db, id) => {
   if (!body) return json({ error: 'invalid json' }, 400)
   const url = cleanFeedUrl(body.url)
   if (!url) return json({ error: 'url required' }, 400)
-  const [feed, stillReferenced] = await Promise.all([getFeed(db, id), isSourceReferencedElsewhere(db, url, id)])
+  // out of this playlist only - the blog stays in sources, delete is the trash can
+  const feed = await getFeed(db, id)
   if (!feed) return json({ error: 'not found' }, 404)
   feed.sources = (feed.sources || []).filter(s => s !== url)
 
   const sourceDatas = await Promise.all(feed.sources.map(u => getSourceData(db, u)))
   applySourceDatas(feed, sourceDatas)
 
-  await Promise.all([
-    saveFeed(db, feed),
-    stillReferenced ? Promise.resolve() : deleteSourceData(db, url),
-    stillReferenced ? Promise.resolve() : deletePostTags(db, url)
-  ])
+  await saveFeed(db, feed)
   return json({ ok: true })
 }

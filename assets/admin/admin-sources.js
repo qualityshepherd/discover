@@ -166,6 +166,8 @@ export async function renderDcSources () {
   if (playlistFilterEl) playlistFilterEl.onchange = applySourceFilters
   const statusFilterEl = $('dc-sources-filter-status')
   if (statusFilterEl) statusFilterEl.onchange = applySourceFilters
+  // re-renders keep whatever search was typed
+  applySourceFilters()
 }
 
 $('btn-dc-add-source').addEventListener('click', async () => {

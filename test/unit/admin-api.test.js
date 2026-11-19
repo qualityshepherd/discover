@@ -144,7 +144,7 @@ test('add source: the exact same feed is just "existing"', async t => {
 
 // removing a source from a playlist
 
-test('playlist remove: a source another playlist still uses keeps its posts; the last removal cleans up', async t => {
+test('playlist remove: taking a blog out of its last playlist keeps the blog', async t => {
   const { db, call } = await setup()
   const url = 'https://shared.test/feed'
   await saveSourceData(db, url, { posts: [{ url: 'https://shared.test/1', title: 'one' }] })
@@ -157,8 +157,9 @@ test('playlist remove: a source another playlist still uses keeps its posts; the
   t.is(rows(db, 'SELECT * FROM post_tags').length, 1)
 
   await call('DELETE', '/api/discover/admin/p2/sources', { url })
-  t.is(rows(db, 'SELECT url FROM sources').length, 0)
-  t.is(rows(db, 'SELECT * FROM post_tags').length, 0)
+  t.deepEqual((await getFeed(db, 'p2')).sources, [])
+  t.is(rows(db, 'SELECT url FROM sources').length, 1)
+  t.is(rows(db, 'SELECT * FROM post_tags').length, 1)
 })
 
 // validate

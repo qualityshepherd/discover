@@ -2,7 +2,7 @@ import { json, parseJsonBody } from './utils.js'
 import { getSourceData, deleteSourceData } from './db-sources.js'
 import { getFeed, saveFeed, isSourceReferencedElsewhere } from './db-feeds.js'
 import { deletePostTags } from './db-search.js'
-import { fetchAndSaveSource, applySourceDatas } from './discover-cron.js'
+import { fetchAndSaveSource, applySourceDatas } from './fetch-source.js'
 
 // POST /api/discover/admin/:id/sources
 export const handlePlaylistSourceAdd = async (req, db, id, domain) => {

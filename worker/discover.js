@@ -1,15 +1,18 @@
 import { memberByToken, isOwnerPubkey, isRateLimited, incrementAttempt } from './auth.js'
-import { json, parseJsonBody, sameBlog, xmlAttr } from './utils.js'
-import { makeId, saveSourceData, getSourceAllData, getAllSourceUrls, getStaleSourceMeta, hasNewSources } from './db-sources.js'
+import { json, parseJsonBody, sameBlog, bareHost } from './utils.js'
+import { getSourceDataBulk, getAllSourceUrls, getStaleSourceMeta, hasNewSources } from './db-sources.js'
 import {
-  computeTags, getFeed, saveFeed, getFeeds, getFilteredFeeds, getTagCounts,
-  getNewestSourcePosts, getRandomSourcePosts, backfillSlugs
+  computeTags, getFeed, getFeeds, getFilteredFeeds, getTagCounts,
+  getNewestSourcePosts, getRandomSourcePosts
 } from './db-feeds.js'
 import { isBlocked, getPending, savePending, getBlocked } from './db-moderation.js'
-import { getMentions, getMentionsForUrl, getSourceMentionCounts } from './db-mentions.js'
+import { getSourceMentionCounts } from './db-mentions.js'
 import { getCronState, getRateLimit, setRateLimit } from './db-auth.js'
 import { searchSources, getTagCloud, getPostsByTag } from './db-search.js'
-import { checkDiscoverFeeds, computeFrequency, fetchSource, findImage, buildLinkGraph, buildCurateCandidates, REBUILD_PROBES } from './discover-cron.js'
+import { checkDiscoverFeeds } from './cron.js'
+import { fetchSource } from './fetch-source.js'
+import { buildLinkGraph } from './link-graph.js'
+import { buildCurateCandidates, REBUILD_PROBES } from './curate.js'
 import { isFullText, feedStats } from './feed-stats.js'
 import {
   handleValidate, handlePendingReject, handlePendingList, handleApprove,
@@ -18,12 +21,8 @@ import {
   handleBlockedList, handleBlockedSave
 } from './discover-admin-sources.js'
 import { handlePlaylistSourceAdd, handlePlaylistRefresh, handlePlaylistSourceRemove } from './discover-admin-playlists.js'
-import { handleWebping, handleCurateGet, handleCurateApprove, handleCurateDismissCandidate } from './discover-admin-curate.js'
+import { handleCurateGet, handleCurateApprove, handleCurateDismissCandidate } from './discover-admin-curate.js'
 import { handleOpml, handlePlaylistRss } from './discover-opml.js'
-import { EDGE_CACHE_CONTROL } from './cache.js'
-
-// re-export for worker/index.js and tests
-export { checkDiscoverFeeds, computeFrequency, makeId, computeTags }
 
 const cors = (res) => {
   res.headers.set('Access-Control-Allow-Origin', '*')
@@ -62,25 +61,6 @@ const handlePlaylist = async (db, id) => {
   return cors(new Response(JSON.stringify(posts), {
     headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=3600' }
   }))
-}
-
-// Resolve source data for a list of URLs from D1, live-fetch anything missing.
-const resolveSourceAll = async (db, allSourceUrls, domain) => {
-  const sourceAll = await getSourceAllData(db, allSourceUrls)
-
-  const stillMissing = allSourceUrls.filter(u => !sourceAll[makeId(u)])
-  for (const url of stillMissing) {
-    const result = await fetchSource(url, 3, domain)
-    if (!result.posts?.length) continue
-    const posts = result.posts.slice(0, 3).map(p => ({
-      title: p.title, url: p.url, date: p.date, author: p.author, feed: p.feed, content: p.content
-    }))
-    const data = { url, posts, image: findImage(result.posts) || null, siteUrl: result.siteUrl || null }
-    sourceAll[makeId(url)] = data
-    await saveSourceData(db, url, { ...data, statusCode: result.statusCode, error: null, lastFetched: new Date().toISOString() })
-  }
-
-  return sourceAll
 }
 
 // GET /api/discover/random
@@ -160,9 +140,7 @@ const handleSubmit = async (req, db, domain) => {
   // full text is the rule, so it's checked here too. the judgment calls
   // (pace, authors, dead) aren't - a human typed this in, a human decides
   if (!isFullText(result.posts)) return ok
-  const known = new Set(sourceUrls.map(u => { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return '' } }))
-  let host = ''
-  try { host = new URL(url).hostname.replace(/^www\./, '') } catch {}
+  const known = new Set(sourceUrls.map(bareHost))
 
   const title = result.posts[0]?.feed?.title || new URL(url).hostname
   const item = {
@@ -170,19 +148,10 @@ const handleSubmit = async (req, db, domain) => {
     title: title || new URL(url).hostname,
     description: '',
     submittedAt: new Date().toISOString(),
-    stats: feedStats({ ...result, feedUrl: url }, host, known)
+    stats: feedStats({ ...result, feedUrl: url }, bareHost(url), known)
   }
   await savePending(db, [...pending, item])
   return ok
-}
-
-// POST /api/discover/:id/import
-const handleImport = async (db, id) => {
-  const feed = await getFeed(db, id)
-  if (!feed) return json({ error: 'not found' }, 404)
-  feed.imports = (feed.imports || 0) + 1
-  await saveFeed(db, feed)
-  return json({ ok: true })
 }
 
 // router
@@ -219,7 +188,6 @@ export const handleDiscover = async (req, env, ctx) => {
   if (idMatch) {
     const id = idMatch[1]
     if (method === 'GET') return handlePlaylist(db, id)
-    if (method === 'POST') return handleImport(db, id)
   }
 
   const opmlMatch = path.match(/^\/api\/discover\/([^/]+)\/opml$/)
@@ -275,7 +243,6 @@ export const handleDiscover = async (req, env, ctx) => {
     return json({ lastCronOk, lastCronCount: lastCronCount ? parseInt(lastCronCount) : null })
   }
 
-  if (method === 'GET' && path === '/api/discover/admin/webping') return handleWebping(db)
   if (method === 'GET' && path === '/api/discover/admin/feeds') {
     const feeds = await getFeeds(db) || []
     return json({ feeds, tags: computeTags(feeds) })
@@ -293,9 +260,9 @@ export const handleDiscover = async (req, env, ctx) => {
   if (method === 'PUT' && path === '/api/discover/admin/blocked') return handleBlockedSave(req, db)
 
   if (method === 'POST' && path === '/api/discover/admin/build-link-graph') {
+    // stored posts only - a source the cron hasn't fetched yet waits for it
     const sourceUrls = await getAllSourceUrls(db)
-    const sourceAll = await resolveSourceAll(db, sourceUrls, env.DOMAIN_NAME)
-    const freshData = new Map(sourceUrls.map(u => [u, sourceAll[makeId(u)]]).filter(([, d]) => d))
+    const freshData = await getSourceDataBulk(db, sourceUrls)
     await buildLinkGraph(db, sourceUrls, freshData)
     const curate = await buildCurateCandidates(db, sourceUrls, freshData, undefined, env.DOMAIN_NAME, Math.random, { probes: REBUILD_PROBES })
     return json({ ok: true, sources: freshData.size, ...curate })
@@ -303,27 +270,6 @@ export const handleDiscover = async (req, env, ctx) => {
   if (method === 'POST' && path === '/api/discover/admin/check') {
     ctx.waitUntil(checkDiscoverFeeds(env).catch(err => console.error('admin check failed:', err)))
     return json({ ok: true, triggered: true })
-  }
-  if (method === 'POST' && path === '/api/discover/admin/backfill-slugs') {
-    const count = await backfillSlugs(db)
-    return json({ ok: true, updated: count })
-  }
-  if (method === 'POST' && path === '/api/discover/admin/normalize-urls') {
-    const norm = u => u.replace(/\/+$/, '')
-    const feeds = await getFeeds(db) || []
-    const ops = []
-    for (const feed of feeds) {
-      const clean = (feed.sources || []).map(norm)
-      if (clean.join() !== (feed.sources || []).join()) { feed.sources = clean; ops.push(saveFeed(db, feed)) }
-    }
-    await Promise.all(ops)
-    return json({ ok: true, updated: ops.length })
-  }
-  if (method === 'POST' && path === '/api/discover/admin/reset-streaks') {
-    const feeds = await getFeeds(db) || []
-    feeds.forEach(f => { f.failStreak = 0; f.lastChecked = null; f.active = true })
-    await Promise.all(feeds.map(f => saveFeed(db, f)))
-    return json({ ok: true, reset: feeds.length })
   }
 
   // Backup download
@@ -343,58 +289,4 @@ export const handleDiscover = async (req, env, ctx) => {
   }
 
   return json({ error: 'not found' }, 404)
-}
-
-// GET /api/mentions/for?url=<post-url> - the footer embed's endpoint.
-// CORS * on purpose: the snippet runs on other people's blogs, and this
-// is public data (same rows the .xml feed publishes). Reeder gets the
-// feed, footers get this - both read the same mentions table.
-export const handleMentionsForUrl = async (db, reqUrl) => {
-  const pageUrl = new URL(reqUrl).searchParams.get('url') || ''
-  const mentions = await getMentionsForUrl(db, pageUrl)
-  const res = json({ mentions })
-  res.headers.set('Access-Control-Allow-Origin', '*')
-  res.headers.set('Cache-Control', EDGE_CACHE_CONTROL)
-  return res
-}
-
-// Only the newest mentions carry the other blog's full post, like any feed's
-// window. Older ones are just a link - their words stay on their site.
-export const MENTIONS_FEED_FULL = 20
-
-// GET /api/mentions/:sourceId.xml
-export const handleMentionsFeed = async (db, sourceId, reqUrl) => {
-  const items = await getMentions(db, sourceId)
-  const domain = sourceId
-  const base = new URL(reqUrl).origin
-
-  const rssItems = items.map((m, i) => {
-    const host = xmlAttr((() => { try { return new URL(m.fromSource).hostname } catch { return m.fromSource } })())
-    const who = `<a href="${m.fromSource}">${host}</a> mentioned <a href="${m.toUrl}">${xmlAttr(domain)}</a>`
-    const body = i < MENTIONS_FEED_FULL
-      ? `<p>↩ ${who} in this post:</p>${m.fromContent || ''}`
-      : `<p>↩ ${who}. <a href="${m.fromPost}">Read it on ${host}</a></p>`
-    return `
-    <item>
-      <title>${xmlAttr(m.fromTitle || m.fromPost)}</title>
-      <link>${xmlAttr(m.fromPost)}</link>
-      <guid>${xmlAttr(m.fromPost)}</guid>
-      <pubDate>${new Date(m.fromDate || m.foundAt).toUTCString()}</pubDate>
-      <description><![CDATA[${body}]]></description>
-    </item>`
-  }).join('')
-
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0">
-  <channel>
-    <title>Mentions of ${xmlAttr(domain)} · discover</title>
-    <description>Posts from other discover sources that linked to ${xmlAttr(domain)}</description>
-    <link>${base}/api/mentions/${sourceId}.xml</link>
-    ${rssItems}
-  </channel>
-</rss>`
-
-  return new Response(xml, {
-    headers: { 'Content-Type': 'application/rss+xml; charset=utf-8', 'Cache-Control': EDGE_CACHE_CONTROL }
-  })
 }

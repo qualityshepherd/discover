@@ -80,36 +80,6 @@ export const deleteSourceData = async (db, url) => {
   await db.prepare('DELETE FROM sources WHERE url = ?').bind(url).run()
 }
 
-// Targeted mentionCount updates — used by buildLinkGraph
-export const updateMentionCounts = async (db, changes) => {
-  if (!changes.length) return
-  const stmts = changes.map(({ url, count }) =>
-    db.prepare('UPDATE sources SET mention_count=? WHERE url=?').bind(count, url)
-  )
-  await db.batch(stmts)
-}
-
-// Returns { [hash]: { url, posts, image, siteUrl } } for the requested URLs (replaces source:all blob)
-export const getSourceAllData = async (db, urls) => {
-  if (!urls.length) return {}
-  const result = {}
-  for (let i = 0; i < urls.length; i += 99) {
-    const chunk = urls.slice(i, i + 99)
-    const rows = await db.prepare(
-      `SELECT url, posts, image, site_url FROM sources WHERE url IN (${chunk.map(() => '?').join(',')})`
-    ).bind(...chunk).all()
-    for (const row of rows.results) {
-      result[makeId(row.url)] = {
-        url: row.url,
-        posts: JSON.parse(row.posts || '[]'),
-        image: row.image || null,
-        siteUrl: row.site_url || null
-      }
-    }
-  }
-  return result
-}
-
 // All source URLs (lightweight — no JSON blobs)
 export const getAllSourceUrls = async (db) => {
   const rows = await db.prepare('SELECT url FROM sources').all()

@@ -10,12 +10,19 @@ export const parseJsonBody = async (req) => {
 
 export const xmlAttr = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
+// hostname without www, '' for anything that isn't a url
+export const bareHost = u => { try { return new URL(u).hostname.replace(/^www\./, '').toLowerCase() } catch { return '' } }
+
+// a feed isn't always on its blog's domain (feedburner, feedpress). the blog
+// is its site url, else where its posts live, else the feed's own host
+export const blogDomain = (feedUrl, data) =>
+  bareHost(data?.siteUrl) || bareHost(data?.posts?.find(p => p.url)?.url) || bareHost(feedUrl)
+
 // a feed already in discover from the same blog, by domain with www
 // stripped - /feed vs /rss.xml, http vs https, www or not. returns that
 // feed's url. misses blogs whose feed lives elsewhere (feedburner); rare.
 export const sameBlog = (url, existingUrls) => {
-  const h = u => { try { return new URL(u).hostname.replace(/^www\./, '').toLowerCase() } catch { return '' } }
-  const target = h(url)
+  const target = bareHost(url)
   if (!target) return null
-  return (existingUrls || []).find(u => h(u) === target) || null
+  return (existingUrls || []).find(u => bareHost(u) === target) || null
 }

@@ -1,6 +1,8 @@
-import { deriveKeypair, signChallenge, scorePassphrase } from '../../../../../../lib/keys.js'
+import { deriveKeypair, signChallenge, scorePassphrase } from '../lib/keys.js'
 import { $, api, getToken, setToken, showError } from './admin-utils.js'
-import { renderDcEntries, loadCronStatus } from './admin-discover.js'
+import { renderDcEntries } from './admin-playlists.js'
+import { loadCronStatus } from './admin-cron.js'
+import './admin-batch.js'
 import { renderCurate, updateCurateBadge } from './admin-curate.js'
 
 document.title = `${location.hostname} admin`

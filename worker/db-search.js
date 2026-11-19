@@ -1,3 +1,5 @@
+import { bareHost } from './utils.js'
+
 // Source-level search — returns individual blogs with their playlist memberships
 export const searchSources = async (db, { q, tag } = {}) => {
   if (!q && !tag) return []
@@ -29,8 +31,7 @@ export const searchSources = async (db, { q, tag } = {}) => {
 
   const byDomain = new Map()
   for (const r of rows.results) {
-    let domain
-    try { domain = new URL(r.url).hostname.replace(/^www\./, '') } catch { domain = r.url }
+    const domain = bareHost(r.url) || r.url
     if (!byDomain.has(domain)) byDomain.set(domain, { r, playlists: [] })
     byDomain.get(domain).playlists.push(...JSON.parse(r.playlists || '[]'))
   }

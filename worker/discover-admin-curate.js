@@ -1,43 +1,7 @@
 import { json, parseJsonBody, sameBlog } from './utils.js'
 import { statsLine } from './feed-stats.js'
-import { getAllSourceUrls, getSourceData } from './db-sources.js'
+import { getAllSourceUrls } from './db-sources.js'
 import { getPending, savePending, getCandidates, saveCandidates, addDismissedDomain } from './db-moderation.js'
-import { VIDEO_DOMAINS } from './discover-cron.js'
-
-// GET /api/discover/admin/webping
-export const handleWebping = async (db) => {
-  const allSourceUrls = await getAllSourceUrls(db)
-
-  const sourceDomains = new Map()
-  for (const url of allSourceUrls) {
-    try { sourceDomains.set(new URL(url).hostname, url) } catch {}
-  }
-
-  const sourceDatas = await Promise.all(allSourceUrls.map(u => getSourceData(db, u)))
-
-  const matches = []
-  for (let i = 0; i < allSourceUrls.length; i++) {
-    const data = sourceDatas[i]
-    if (!data?.posts) continue
-    const fromDomain = (() => { try { return new URL(allSourceUrls[i]).hostname } catch { return null } })()
-    for (const post of data.posts) {
-      if (!post.content) continue
-      const hrefs = [...post.content.matchAll(/href=["']([^"']+)["']/g)].map(m => m[1])
-      for (const href of hrefs) {
-        try {
-          const domain = new URL(href).hostname
-          if (domain === fromDomain) continue
-          if (VIDEO_DOMAINS.has(domain)) continue
-          if (sourceDomains.has(domain)) {
-            matches.push({ from: allSourceUrls[i], post: post.url, postTitle: post.title, linksTo: href, targetSource: sourceDomains.get(domain) })
-          }
-        } catch {}
-      }
-    }
-  }
-
-  return json({ sources: allSourceUrls.length, matches })
-}
 
 // GET /api/discover/admin/curate
 export const handleCurateGet = async (db) => {

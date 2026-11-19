@@ -1,11 +1,11 @@
 import { trackHit } from './hit.js'
-import { handleDiscover, handleMentionsFeed, handleMentionsForUrl, checkDiscoverFeeds } from './discover.js'
-import { handleAuth, memberByToken } from './auth.js'
+import { handleDiscover } from './discover.js'
+import { handleMentionsFeed, handleMentionsForUrl } from './mentions.js'
+import { checkDiscoverFeeds } from './cron.js'
+import { handleAuth } from './auth.js'
 import { getFeed } from './db-feeds.js'
-import { json } from './utils.js'
+import { xmlAttr as escHtml } from './utils.js'
 import { isEdgeCacheable, withEdgeCache } from './cache.js'
-
-const escHtml = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 // Hash of the inline theme-init <script> - identical in discover/index.html,
 // about/index.html and 404.html (test/unit/csp.test.js fails if any of them
@@ -48,8 +48,6 @@ const withSec = async (res) => {
   for (const [k, v] of Object.entries(SEC_HEADERS)) h.set(k, v)
   return new Response(r.body, { status: r.status, headers: h })
 }
-
-const PUBLIC_API = new Set(['/api/challenge', '/api/login', '/api/me', '/api/hit'])
 
 const PRIVATE = [
   '/worker/', '/test/', '/node_modules/',
@@ -101,13 +99,6 @@ async function route (req, env, ctx) {
 
   // Discover routes — public except /admin sub-paths (auth handled inside)
   if (path.startsWith('/api/discover')) return handleDiscover(req, env, ctx)
-
-  // Auth gate — all /api/* routes not in PUBLIC_API require a valid token
-  if (path.startsWith('/api/') && !PUBLIC_API.has(path)) {
-    const token = req.headers.get('authorization')?.replace('Bearer ', '')
-    const pubkey = token ? await memberByToken(token, env.DISCOVER_DB) : null
-    if (!pubkey) return json({ error: 'unauthorized' }, 401)
-  }
 
   // Auth routes
   if (path === '/api/challenge' || path === '/api/login' || path === '/api/me') {

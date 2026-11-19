@@ -5,10 +5,7 @@ import {
   extractAttr,
   isAtom,
   parseFeedTitle,
-  parseFeed,
-  limitFeed,
-  sortByDate,
-  aggregateFeeds
+  parseFeed
 } from '../../worker/feedParser.js'
 import { extractFirstImage } from '../../assets/src/feedRules.js'
 
@@ -163,104 +160,6 @@ test('FeedParser: parseFeed atom entry extracts author name', t => {
   t.is(first.author, 'John Smith')
 })
 
-// limitFeed
-
-test('FeedParser: limitFeed slices to given limit', t => {
-  const posts = Array.from({ length: 15 }, (_, i) => ({ title: `Post ${i}` }))
-  t.is(limitFeed(posts, 5).length, 5)
-})
-
-test('FeedParser: limitFeed defaults to 10', t => {
-  const posts = Array.from({ length: 15 }, (_, i) => ({ title: `Post ${i}` }))
-  t.is(limitFeed(posts).length, 10)
-})
-
-test('FeedParser: limitFeed returns all posts when under limit', t => {
-  const posts = [{ title: 'A' }, { title: 'B' }]
-  t.is(limitFeed(posts, 10).length, 2)
-})
-
-test('FeedParser: limitFeed does not mutate original', t => {
-  const posts = Array.from({ length: 5 }, (_, i) => ({ title: `Post ${i}` }))
-  limitFeed(posts, 2)
-  t.is(posts.length, 5)
-})
-
-// sortByDate
-
-test('FeedParser: sortByDate sorts newest first', t => {
-  const posts = [
-    { date: 'Mon, 01 Jan 2024 00:00:00 GMT' },
-    { date: 'Wed, 03 Jan 2024 00:00:00 GMT' },
-    { date: 'Tue, 02 Jan 2024 00:00:00 GMT' }
-  ]
-  const sorted = sortByDate(posts)
-  t.is(sorted[0].date, 'Wed, 03 Jan 2024 00:00:00 GMT')
-  t.is(sorted[2].date, 'Mon, 01 Jan 2024 00:00:00 GMT')
-})
-
-test('FeedParser: sortByDate does not mutate original', t => {
-  const posts = [
-    { date: 'Mon, 01 Jan 2024 00:00:00 GMT' },
-    { date: 'Wed, 03 Jan 2024 00:00:00 GMT' }
-  ]
-  const original = [...posts]
-  sortByDate(posts)
-  t.deepEqual(posts, original)
-})
-
-// aggregateFeeds
-
-test('FeedParser: aggregateFeeds combines posts from multiple feeds', t => {
-  const feedResults = [
-    {
-      posts: [{ title: 'A', date: 'Wed, 03 Jan 2024 00:00:00 GMT' }],
-      config: { url: 'https://a.com/feed.xml' }
-    },
-    {
-      posts: [{ title: 'B', date: 'Tue, 02 Jan 2024 00:00:00 GMT' }],
-      config: { url: 'https://b.com/feed.xml' }
-    }
-  ]
-  t.is(aggregateFeeds(feedResults).length, 2)
-})
-
-test('FeedParser: aggregateFeeds respects per-feed limit', t => {
-  const posts = Array.from({ length: 5 }, (_, i) => ({
-    title: `Post ${i}`,
-    date: `Mon, 0${i + 1} Jan 2024 00:00:00 GMT`
-  }))
-  const feedResults = [{ posts, config: { url: 'https://a.com/feed.xml', limit: 2 } }]
-  t.is(aggregateFeeds(feedResults).length, 2)
-})
-
-test('FeedParser: aggregateFeeds uses default limit of 10 when not specified', t => {
-  const posts = Array.from({ length: 15 }, (_, i) => ({
-    title: `Post ${i}`,
-    date: 'Mon, 01 Jan 2024 00:00:00 GMT'
-  }))
-  const feedResults = [{ posts, config: { url: 'https://a.com/feed.xml' } }]
-  t.is(aggregateFeeds(feedResults).length, 10)
-})
-
-test('FeedParser: aggregateFeeds sorts combined posts by date newest first', t => {
-  const feedResults = [
-    {
-      posts: [{ title: 'Old', date: 'Mon, 01 Jan 2024 00:00:00 GMT' }],
-      config: { url: 'https://a.com/feed.xml' }
-    },
-    {
-      posts: [{ title: 'New', date: 'Wed, 03 Jan 2024 00:00:00 GMT' }],
-      config: { url: 'https://b.com/feed.xml' }
-    }
-  ]
-  t.is(aggregateFeeds(feedResults)[0].title, 'New')
-})
-
-test('FeedParser: aggregateFeeds handles empty feed results', t => {
-  t.deepEqual(aggregateFeeds([]), [])
-})
-
 // image pipeline
 
 test('FeedParser: parseFeed includes media:content image in content', t => {
@@ -288,13 +187,4 @@ test('FeedParser: parseFeed img in content:encoded is found by extractFirstImage
   </channel></rss>`
   const [post] = parseFeed(xml, { url: 'https://example.com/feed.xml' })
   t.is(extractFirstImage(post.content), 'https://example.com/hero.jpg')
-})
-
-test('FeedParser: aggregateFeeds deduplicates posts by url', t => {
-  const post = { url: 'https://example.com/post1', date: '2026-01-01', title: 'Post', feed: { title: 'Feed' } }
-  const feeds = [
-    { posts: [post], config: { limit: 10 } },
-    { posts: [post], config: { limit: 10 } }
-  ]
-  t.is(aggregateFeeds(feeds).length, 1)
 })

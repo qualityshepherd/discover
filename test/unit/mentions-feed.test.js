@@ -1,5 +1,5 @@
 import { unit as test } from '../testpup.js'
-import { handleMentionsFeed, MENTIONS_FEED_FULL } from '../../worker/discover.js'
+import { handleMentionsFeed, MENTIONS_FEED_FULL } from '../../worker/mentions.js'
 
 // newest first, the way getMentions' ORDER BY found_at DESC hands them over
 const rows = n => Array.from({ length: n }, (_, i) => ({

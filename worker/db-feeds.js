@@ -19,10 +19,29 @@ const rowToFeed = (row, sources = []) => {
     lastChecked: row.last_checked || null,
     lastUpdated: row.last_updated || null,
     previewPosts: row.preview_posts ? JSON.parse(row.preview_posts) : undefined,
-    failStreak: row.fail_streak || 0,
     addedAt: row.added_at,
     sources
   }
+}
+
+// { feedId: [sourceUrl, ...] } in the order they were added
+const groupSources = rows => {
+  const byFeed = {}
+  for (const { feed_id: fid, source_url: url } of rows) (byFeed[fid] ||= []).push(url)
+  return byFeed
+}
+
+// D1 caps bound parameters, so big IN lists go in chunks of 99
+const sourcesFor = async (db, ids) => {
+  const rows = []
+  for (let i = 0; i < ids.length; i += 99) {
+    const chunk = ids.slice(i, i + 99)
+    const r = await db.prepare(
+      `SELECT feed_id, source_url FROM feed_sources WHERE feed_id IN (${chunk.map(() => '?').join(',')}) ORDER BY added_at`
+    ).bind(...chunk).all()
+    rows.push(...r.results)
+  }
+  return groupSources(rows)
 }
 
 // id can be the real hex id or a slug - old links gotta keep working forever
@@ -48,27 +67,11 @@ export const generateUniqueSlug = async (db, title, excludeId = null) => {
   }
 }
 
-// backfill for playlists that predate slugs - only fills NULLs, safe to rerun
-export const backfillSlugs = async (db) => {
-  const { results } = await db.prepare('SELECT id, title FROM feeds WHERE slug IS NULL').all()
-  let count = 0
-  for (const { id, title } of results) {
-    const slug = await generateUniqueSlug(db, title, id)
-    await db.prepare('UPDATE feeds SET slug = ? WHERE id = ?').bind(slug, id).run()
-    count++
-  }
-  return count
-}
-
 export const getFeeds = async (db) => {
   const feedRows = await db.prepare('SELECT * FROM feeds').all()
   if (!feedRows.results.length) return []
   const srcRows = await db.prepare('SELECT feed_id, source_url FROM feed_sources ORDER BY added_at').all()
-  const byFeed = {}
-  for (const { feed_id: fid, source_url: surl } of srcRows.results) {
-    if (!byFeed[fid]) byFeed[fid] = []
-    byFeed[fid].push(surl)
-  }
+  const byFeed = groupSources(srcRows.results)
   return feedRows.results.map(row => rowToFeed(row, byFeed[row.id] || []))
 }
 
@@ -78,16 +81,16 @@ export const getFeeds = async (db) => {
 export const saveFeed = async (db, feed, { syncChildren = true } = {}) => {
   const {
     id, slug, title, description, type, tags, coverImage, ownerPubkey, featured, imports,
-    active, updateFrequency, lastChecked, lastUpdated, previewPosts, failStreak,
+    active, updateFrequency, lastChecked, lastUpdated, previewPosts,
     addedAt, sources = []
   } = feed
 
   await db.prepare(`
     INSERT INTO feeds
       (id, slug, title, description, type, tags, cover_image, owner_pubkey, featured, imports,
-       active, update_frequency, last_checked, last_updated, preview_posts, fail_streak,
+       active, update_frequency, last_checked, last_updated, preview_posts,
        added_at, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
       slug=excluded.slug,
       title=excluded.title, description=excluded.description, type=excluded.type,
@@ -95,7 +98,7 @@ export const saveFeed = async (db, feed, { syncChildren = true } = {}) => {
       owner_pubkey=excluded.owner_pubkey, featured=excluded.featured, imports=excluded.imports,
       active=excluded.active, update_frequency=excluded.update_frequency,
       last_checked=excluded.last_checked, last_updated=excluded.last_updated,
-      preview_posts=excluded.preview_posts, fail_streak=excluded.fail_streak,
+      preview_posts=excluded.preview_posts,
       updated_at=datetime('now')
   `).bind(
     id, slug || null, title, description || null, type || null,
@@ -105,7 +108,6 @@ export const saveFeed = async (db, feed, { syncChildren = true } = {}) => {
     featured ? 1 : 0, imports || 0, active !== false ? 1 : 0,
     updateFrequency || null, lastChecked || null, lastUpdated || null,
     previewPosts ? JSON.stringify(previewPosts) : null,
-    failStreak || 0,
     addedAt || new Date().toISOString()
   ).run()
 
@@ -173,19 +175,7 @@ export const getFilteredFeeds = async (db, { tag, q, limit = 50, cursor } = {}) 
   if (!feedRows.length) return { feeds: [], cursor: null }
 
   const ids = feedRows.map(f => f.id)
-  const srcRows = []
-  for (let i = 0; i < ids.length; i += 99) {
-    const chunk = ids.slice(i, i + 99)
-    const r = await db.prepare(
-      `SELECT feed_id, source_url FROM feed_sources WHERE feed_id IN (${chunk.map(() => '?').join(',')}) ORDER BY added_at`
-    ).bind(...chunk).all()
-    srcRows.push(...r.results)
-  }
-  const byFeed = {}
-  for (const { feed_id: fid, source_url: surl } of srcRows) {
-    if (!byFeed[fid]) byFeed[fid] = []
-    byFeed[fid].push(surl)
-  }
+  const byFeed = await sourcesFor(db, ids)
 
   const last = feedRows[feedRows.length - 1]
   const nextCursor = hasMore ? btoa(JSON.stringify({ f: last.featured, i: last.imports, id: last.id })) : null
@@ -253,19 +243,7 @@ export const getFeedsBySourceUrl = async (db, url) => {
   `).bind(url).all()
   if (!feedRows.results.length) return []
   const ids = feedRows.results.map(f => f.id)
-  const srcRows = []
-  for (let i = 0; i < ids.length; i += 99) {
-    const chunk = ids.slice(i, i + 99)
-    const r = await db.prepare(
-      `SELECT feed_id, source_url FROM feed_sources WHERE feed_id IN (${chunk.map(() => '?').join(',')}) ORDER BY added_at`
-    ).bind(...chunk).all()
-    srcRows.push(...r.results)
-  }
-  const byFeed = {}
-  for (const { feed_id: fid, source_url: surl } of srcRows) {
-    if (!byFeed[fid]) byFeed[fid] = []
-    byFeed[fid].push(surl)
-  }
+  const byFeed = await sourcesFor(db, ids)
   return feedRows.results.map(row => rowToFeed(row, byFeed[row.id] || []))
 }
 

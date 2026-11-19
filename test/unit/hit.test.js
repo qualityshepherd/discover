@@ -10,6 +10,7 @@ test('shouldSkip: does not skip /favicon locally (chalk classifies it centrally)
 test('shouldSkip: does not skip /sitemap.xml locally (chalk classifies it centrally)', t => { t.falsy(shouldSkip('/sitemap.xml')) })
 test('shouldSkip: does not skip manifest.json locally (chalk classifies it centrally)', t => { t.falsy(shouldSkip('/manifest.json')) })
 test('shouldSkip: normal path is not skipped', t => { t.falsy(shouldSkip('/')) })
+test('shouldSkip: a query string does not make a page skippable', t => { t.falsy(shouldSkip('/?t=javascript')) })
 test('shouldSkip: extension check ignores query string', t => { t.ok(shouldSkip('/style.css?v=2')) })
 
 test('identifyRssFeed: mentions feed is prefixed', async t => {

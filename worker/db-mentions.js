@@ -1,4 +1,5 @@
 import { urlMatchKey } from './url-normalize.js'
+import { bareHost } from './utils.js'
 
 export const getMentions = async (db, domain) => {
   const rows = await db.prepare(
@@ -22,8 +23,8 @@ export const getMentions = async (db, domain) => {
 export const getMentionsForUrl = async (db, pageUrl) => {
   const wanted = urlMatchKey(pageUrl)
   if (!wanted) return []
-  let domain
-  try { domain = new URL(pageUrl).hostname.replace(/^www\./, '') } catch { return [] }
+  const domain = bareHost(pageUrl)
+  if (!domain) return []
   const all = await getMentions(db, domain)
   return all
     .filter(m => urlMatchKey(m.toUrl) === wanted)
@@ -31,21 +32,8 @@ export const getMentionsForUrl = async (db, pageUrl) => {
       url: m.fromPost,
       title: m.fromTitle || m.fromPost,
       date: m.fromDate || m.foundAt,
-      source: (() => { try { return new URL(m.fromSource).hostname.replace(/^www\./, '') } catch { return m.fromSource } })()
+      source: bareHost(m.fromSource) || m.fromSource
     }))
-}
-
-export const getMentionDomainsForSources = async (db, sourceUrls) => {
-  if (!sourceUrls.length) return []
-  const results = []
-  for (let i = 0; i < sourceUrls.length; i += 99) {
-    const chunk = sourceUrls.slice(i, i + 99)
-    const rows = await db.prepare(
-      `SELECT DISTINCT to_domain FROM mentions WHERE from_source IN (${chunk.map(() => '?').join(',')})`
-    ).bind(...chunk).all()
-    results.push(...rows.results.map(r => r.to_domain))
-  }
-  return results
 }
 
 // Diffs against the stored rows for this domain instead of delete-and-reinsert.

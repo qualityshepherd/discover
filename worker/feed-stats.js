@@ -1,3 +1,5 @@
+import { bareHost } from './utils.js'
+
 // The machine's half of curation: read a candidate's feed once and say no
 // to the obvious ones, so the curate list is only blogs worth a look.
 // Every number here is a starting guess - tune, don't trust.
@@ -8,8 +10,6 @@ export const MAG_POSTS_PER_MONTH = 30
 export const MAX_AUTHORS = 2
 
 const DAY = 86400000
-
-const host = u => { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return '' } }
 
 const postText = p => (p.content || '')
   .replace(/<[^>]*>/g, ' ')
@@ -52,11 +52,11 @@ const postsPerMonth = (times) => {
 export const feedStats = (feed, domain, known = new Set()) => {
   const posts = feed?.posts || []
   const times = posts.map(p => Date.parse(p.date)).filter(Number.isFinite).sort((a, b) => b - a)
-  const self = new Set([domain, host(feed?.siteUrl), host(feed?.feedUrl)].filter(Boolean))
+  const self = new Set([domain, bareHost(feed?.siteUrl), bareHost(feed?.feedUrl)].filter(Boolean))
   const linksBack = new Set()
   for (const p of posts) {
     for (const [, href] of (p.content || '').matchAll(/href=["']([^"']+)["']/g)) {
-      const d = host(href)
+      const d = bareHost(href)
       if (d && !self.has(d) && known.has(d)) linksBack.add(d)
     }
   }

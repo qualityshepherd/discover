@@ -1,10 +1,10 @@
 import { json, parseJsonBody, sameBlog } from './utils.js'
 import { isFullText } from './feed-stats.js'
-import { makeId, getSourceData, deleteSourceData } from './db-sources.js'
+import { makeId, getSourceData, deleteSourceData, getAllSourceUrls } from './db-sources.js'
 import { getFeed, saveFeed, getFeeds, removeFromIndex, getFeedsBySourceUrl, generateUniqueSlug, slugify } from './db-feeds.js'
 import { isBlocked, isUrlBlocked, getPending, savePending, getBlocked, saveBlocked } from './db-moderation.js'
 import { deletePostTags } from './db-search.js'
-import { fetchAndSaveSource, applySourceDatas, fetchSource } from './discover-cron.js'
+import { fetchAndSaveSource, applySourceDatas, fetchSource } from './fetch-source.js'
 
 // POST /api/discover/admin/validate — batch URL validation
 export const handleValidate = async (req, db, domain) => {
@@ -163,6 +163,11 @@ export const handleSourceRegister = async (req, db, domain) => {
   if (!URL.canParse(url)) return json({ error: 'invalid url' }, 400)
   const existing = await getSourceData(db, url)
   if (existing) return json({ ok: true, existing: true })
+  // a second feed from a blog that's already here - ask, don't refuse
+  if (!body.force) {
+    const duplicateOf = sameBlog(url, await getAllSourceUrls(db))
+    if (duplicateOf) return json({ ok: false, duplicateOf })
+  }
   const { indexEntry } = await fetchAndSaveSource(db, url, domain)
   return json({ ok: true, existing: false, source: indexEntry })
 }

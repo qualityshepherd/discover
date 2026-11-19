@@ -43,7 +43,7 @@ export const isBlocked = async (db, sources) => {
 // Curate candidates / dismissed domains
 
 export const getCandidates = async (db) => {
-  // quiet first - see quietFirst in discover-cron.js
+  // quiet first - see quietFirst in curate.js
   const rows = await db.prepare('SELECT * FROM curate_candidates ORDER BY score ASC, first_seen DESC').all()
   return rows.results.map(r => ({
     domain: r.domain,

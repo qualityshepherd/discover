@@ -1,4 +1,5 @@
-import { json, parseJsonBody, isClickThrough } from './utils.js'
+import { json, parseJsonBody, sameBlog } from './utils.js'
+import { isFullText } from './feed-stats.js'
 import { makeId, getSourceData, deleteSourceData } from './db-sources.js'
 import { getFeed, saveFeed, getFeeds, removeFromIndex, getFeedsBySourceUrl, generateUniqueSlug, slugify } from './db-feeds.js'
 import { isBlocked, isUrlBlocked, getPending, savePending, getBlocked, saveBlocked } from './db-moderation.js'
@@ -13,7 +14,8 @@ export const handleValidate = async (req, db, domain) => {
   if (!urls.length) return json({ error: 'urls required' }, 400)
 
   const [feeds, pending, blocked] = await Promise.all([getFeeds(db), getPending(db), getBlocked(db)])
-  const allSourceUrls = new Set((feeds || []).flatMap(f => f.sources || []))
+  const sourceList = [...new Set((feeds || []).flatMap(f => f.sources || []))]
+  const allSourceUrls = new Set(sourceList)
   const pendingUrls = new Set((pending || []).map(p => p.url))
   const blockedList = blocked || []
 
@@ -26,9 +28,11 @@ export const handleValidate = async (req, db, domain) => {
     const result = await fetchSource(url, 5, domain)
     if (!result.posts) return { url, status: 'fetch-error', statusCode: result.statusCode, error: result.error }
     if (!result.posts.length) return { url, status: 'no-content' }
-    if (isClickThrough(result.posts)) return { url, status: 'click-through' }
+    if (!isFullText(result.posts)) return { url, status: 'truncated' }
     const title = result.posts[0]?.feed?.title || new URL(url).hostname
-    return { url, status: 'valid', title, postCount: result.posts.length, samplePost: { title: result.posts[0].title, url: result.posts[0].url } }
+    // a warning, not a wall - the odd blog really does run two feeds
+    const duplicateOf = sameBlog(url, sourceList)
+    return { url, status: 'valid', duplicateOf, title, postCount: result.posts.length, samplePost: { title: result.posts[0].title, url: result.posts[0].url } }
   }))
   return json(results)
 }

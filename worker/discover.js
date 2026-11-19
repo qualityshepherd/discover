@@ -1,15 +1,16 @@
 import { memberByToken, isOwnerPubkey, isRateLimited, incrementAttempt } from './auth.js'
-import { json, parseJsonBody, isClickThrough, xmlAttr } from './utils.js'
+import { json, parseJsonBody, sameBlog, xmlAttr } from './utils.js'
 import { makeId, saveSourceData, getSourceAllData, getAllSourceUrls, getStaleSourceMeta, hasNewSources } from './db-sources.js'
 import {
   computeTags, getFeed, saveFeed, getFeeds, getFilteredFeeds, getTagCounts,
-  getNewestSourcePosts, getRandomSourcePosts, isFeedSource, backfillSlugs
+  getNewestSourcePosts, getRandomSourcePosts, backfillSlugs
 } from './db-feeds.js'
 import { isBlocked, getPending, savePending, getBlocked } from './db-moderation.js'
 import { getMentions, getMentionsForUrl, getSourceMentionCounts } from './db-mentions.js'
 import { getCronState, getRateLimit, setRateLimit } from './db-auth.js'
 import { searchSources, getTagCloud, getPostsByTag } from './db-search.js'
-import { checkDiscoverFeeds, computeFrequency, fetchSource, findImage, buildLinkGraph, buildCurateCandidates } from './discover-cron.js'
+import { checkDiscoverFeeds, computeFrequency, fetchSource, findImage, buildLinkGraph, buildCurateCandidates, REBUILD_PROBES } from './discover-cron.js'
+import { isFullText, feedStats } from './feed-stats.js'
 import {
   handleValidate, handlePendingReject, handlePendingList, handleApprove,
   handleAdd, handleEdit, handleDelete,
@@ -149,20 +150,27 @@ const handleSubmit = async (req, db, domain) => {
 
   if (await isBlocked(db, [url])) return ok
 
-  const [alreadySource, pending] = await Promise.all([isFeedSource(db, url), getPending(db)])
-  if (alreadySource) return ok
+  // same blog under another feed url counts as already here
+  const [sourceUrls, pending] = await Promise.all([getAllSourceUrls(db), getPending(db)])
+  if (sameBlog(url, sourceUrls)) return ok
   if ((pending || []).some(f => f.url === url)) return ok
 
-  const result = await fetchSource(url, 5, domain)
+  const result = await fetchSource(url, 20, domain)
   if (!result.posts?.length) return ok
-  if (isClickThrough(result.posts)) return ok
+  // full text is the rule, so it's checked here too. the judgment calls
+  // (pace, authors, dead) aren't - a human typed this in, a human decides
+  if (!isFullText(result.posts)) return ok
+  const known = new Set(sourceUrls.map(u => { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return '' } }))
+  let host = ''
+  try { host = new URL(url).hostname.replace(/^www\./, '') } catch {}
 
   const title = result.posts[0]?.feed?.title || new URL(url).hostname
   const item = {
     url,
     title: title || new URL(url).hostname,
     description: '',
-    submittedAt: new Date().toISOString()
+    submittedAt: new Date().toISOString(),
+    stats: feedStats({ ...result, feedUrl: url }, host, known)
   }
   await savePending(db, [...pending, item])
   return ok
@@ -289,8 +297,8 @@ export const handleDiscover = async (req, env, ctx) => {
     const sourceAll = await resolveSourceAll(db, sourceUrls, env.DOMAIN_NAME)
     const freshData = new Map(sourceUrls.map(u => [u, sourceAll[makeId(u)]]).filter(([, d]) => d))
     await buildLinkGraph(db, sourceUrls, freshData)
-    await buildCurateCandidates(db, sourceUrls, freshData, undefined, env.DOMAIN_NAME)
-    return json({ ok: true, sources: freshData.size })
+    const curate = await buildCurateCandidates(db, sourceUrls, freshData, undefined, env.DOMAIN_NAME, Math.random, { probes: REBUILD_PROBES })
+    return json({ ok: true, sources: freshData.size, ...curate })
   }
   if (method === 'POST' && path === '/api/discover/admin/check') {
     ctx.waitUntil(checkDiscoverFeeds(env).catch(err => console.error('admin check failed:', err)))

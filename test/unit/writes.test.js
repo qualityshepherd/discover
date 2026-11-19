@@ -6,6 +6,7 @@ import { savePostTags } from '../../worker/db-search.js'
 import { saveMentions, getMentionsForUrl } from '../../worker/db-mentions.js'
 import { buildLinkGraph } from '../../worker/discover-cron.js'
 import { saveFeed } from '../../worker/db-feeds.js'
+import { saveCandidates, getCandidates, savePending, getPending } from '../../worker/db-moderation.js'
 
 let DatabaseSync = null
 try { ({ DatabaseSync } = await import('node:sqlite')) } catch {}
@@ -307,4 +308,30 @@ test('saveFeed: syncChildren false updates the feed row only', async t => {
   t.ok(rows(db, "SELECT preview_posts FROM feeds WHERE id = 'f1'")[0].preview_posts.includes('new post'))
   t.is(rows(db, 'SELECT * FROM feed_sources').length, 2)
   t.is(rows(db, "SELECT * FROM feeds_fts WHERE feed_id = 'f1'").length, 1)
+})
+
+test('saveCandidates: stats and the reject reason survive the round trip, a re-save writes nothing', async t => {
+  if (skip) return
+  const db = makeDb()
+  const list = [
+    { domain: 'good.blog', score: 1, sources: ['a.com'], firstSeen: '2026-11-19', probedAt: '2026-11-19', feedUrl: 'https://good.blog/feed', stats: { posts: 4, linksBack: ['a.com'] }, rejected: null },
+    { domain: 'teaser.com', score: 2, sources: ['a.com', 'b.com'], firstSeen: '2026-11-19', probedAt: '2026-11-19', feedUrl: 'https://teaser.com/feed', stats: { posts: 4 }, rejected: 'truncated' }
+  ]
+  await saveCandidates(db, list)
+  const got = await getCandidates(db)
+  t.deepEqual(got.find(c => c.domain === 'good.blog').stats.linksBack, ['a.com'])
+  t.is(got.find(c => c.domain === 'teaser.com').rejected, 'truncated')
+
+  db.changes = 0
+  await saveCandidates(db, got)
+  t.is(db.changes, 0)
+})
+
+test('savePending: stats ride along on a pending row', async t => {
+  if (skip) return
+  const db = makeDb()
+  await savePending(db, [{ url: 'https://x.blog/feed', title: 'x', stats: { posts: 3, fullText: true } }, { url: 'https://y.blog/feed', title: 'y' }])
+  const got = await getPending(db)
+  t.is(got.find(p => p.url === 'https://x.blog/feed').stats.fullText, true)
+  t.is(got.find(p => p.url === 'https://y.blog/feed').stats, null)
 })

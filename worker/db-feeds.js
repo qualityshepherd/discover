@@ -236,12 +236,6 @@ export const getRandomSourcePosts = async (db) => {
   }))
 }
 
-// Whether a URL exists in any feed's sources
-export const isFeedSource = async (db, url) => {
-  const row = await db.prepare('SELECT 1 FROM feed_sources WHERE source_url = ? LIMIT 1').bind(url).first()
-  return !!row
-}
-
 // Whether a URL is in any feed OTHER than excludeFeedId
 export const isSourceReferencedElsewhere = async (db, url, excludeFeedId) => {
   const row = await db.prepare(

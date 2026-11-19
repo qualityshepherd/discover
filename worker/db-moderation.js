@@ -1,13 +1,15 @@
+const parseStats = s => { try { return s ? JSON.parse(s) : null } catch { return null } }
+
 export const getPending = async (db) => {
-  const rows = await db.prepare('SELECT url, title, description, submitted_at FROM pending ORDER BY submitted_at').all()
-  return rows.results.map(r => ({ url: r.url, title: r.title || '', description: r.description || '', submittedAt: r.submitted_at }))
+  const rows = await db.prepare('SELECT url, title, description, submitted_at, stats FROM pending ORDER BY submitted_at').all()
+  return rows.results.map(r => ({ url: r.url, title: r.title || '', description: r.description || '', submittedAt: r.submitted_at, stats: parseStats(r.stats) }))
 }
 
 export const savePending = async (db, list) => {
   const stmts = [db.prepare('DELETE FROM pending')]
   for (const item of list) {
-    stmts.push(db.prepare('INSERT INTO pending (url, title, description, submitted_at) VALUES (?,?,?,?)').bind(
-      item.url, item.title || '', item.description || '', item.submittedAt || new Date().toISOString()
+    stmts.push(db.prepare('INSERT INTO pending (url, title, description, submitted_at, stats) VALUES (?,?,?,?,?)').bind(
+      item.url, item.title || '', item.description || '', item.submittedAt || new Date().toISOString(), item.stats ? JSON.stringify(item.stats) : null
     ))
   }
   await db.batch(stmts)
@@ -49,17 +51,18 @@ export const getCandidates = async (db) => {
     sources: JSON.parse(r.sources || '[]'),
     firstSeen: r.first_seen,
     probedAt: r.probed_at,
-    feedUrl: r.feed_url
+    feedUrl: r.feed_url,
+    stats: parseStats(r.stats),
+    rejected: r.rejected || null
   }))
 }
 
 // Diffs against what's stored instead of wipe-and-rewrite: the daily cron
 // calls this, and rewriting 150 rows (plus the PK index) to change two of
 // them was ~600 writes for nothing. Same shape as saveMentions.
-// Callers cap the list - buildCurateCandidates keeps 50 found + 100 failed.
 export const saveCandidates = async (db, list) => {
   const stored = new Map((await getCandidates(db)).map(c => [c.domain, c]))
-  const row = c => [c.score, JSON.stringify(c.sources || []), c.firstSeen || null, c.probedAt || null, c.feedUrl || null]
+  const row = c => [c.score, JSON.stringify(c.sources || []), c.firstSeen || null, c.probedAt || null, c.feedUrl || null, c.stats ? JSON.stringify(c.stats) : null, c.rejected || null]
   const wanted = new Map(list.map(c => [c.domain, c]))
   const stmts = []
   for (const domain of stored.keys()) {
@@ -69,11 +72,11 @@ export const saveCandidates = async (db, list) => {
     const prev = stored.get(domain)
     if (!prev) {
       stmts.push(db.prepare(
-        'INSERT INTO curate_candidates (domain, score, sources, first_seen, probed_at, feed_url) VALUES (?,?,?,?,?,?)'
+        'INSERT INTO curate_candidates (domain, score, sources, first_seen, probed_at, feed_url, stats, rejected) VALUES (?,?,?,?,?,?,?,?)'
       ).bind(domain, ...row(c)))
     } else if (JSON.stringify(row(prev)) !== JSON.stringify(row(c))) {
       stmts.push(db.prepare(
-        'UPDATE curate_candidates SET score=?, sources=?, first_seen=?, probed_at=?, feed_url=? WHERE domain=?'
+        'UPDATE curate_candidates SET score=?, sources=?, first_seen=?, probed_at=?, feed_url=?, stats=?, rejected=? WHERE domain=?'
       ).bind(...row(c), domain))
     }
   }

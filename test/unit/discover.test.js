@@ -1,7 +1,8 @@
 import { unit as test } from '../testpup.js'
 import { computeFrequency, makeId, computeTags } from '../../worker/discover.js'
-import { isClickThrough } from '../../worker/utils.js'
-import { buildCurateCandidates, maybeBuildCurateCandidates, readLimitedText, PROBES_PER_RUN, blogDomain, findFeedLink, probeFeedUrl } from '../../worker/discover-cron.js'
+import { sameBlog } from '../../worker/utils.js'
+import { isFullText, feedStats, rejectReason, statsLine } from '../../worker/feed-stats.js'
+import { buildCurateCandidates, maybeBuildCurateCandidates, readLimitedText, PROBES_PER_RUN, blogDomain, findFeedLink, probeFeedUrl, feedInfo } from '../../worker/discover-cron.js'
 import { isBlocked, isUrlBlocked, getCandidates } from '../../worker/db-moderation.js'
 
 // isBlocked
@@ -151,39 +152,28 @@ test('computeFrequency: exactly 8 posts returns weekly', t => {
   t.is(computeFrequency(posts), 'weekly')
 })
 
-// isClickThrough
+// isFullText - discover's full-text rule
 
-test('isClickThrough: false for empty/null posts', t => {
-  t.falsy(isClickThrough([]))
-  t.falsy(isClickThrough(null))
+const long = '<p>' + 'word '.repeat(160) + '</p>'
+
+test('isFullText: nothing to read is not full text', t => {
+  t.falsy(isFullText([]))
+  t.falsy(isFullText(null))
+  t.falsy(isFullText([{ content: '' }]))
 })
 
-test('isClickThrough: false when at least one post has real content', t => {
-  const posts = [
-    { content: '<p>' + 'x'.repeat(150) + '</p>' },
-    { content: '' }
-  ]
-  t.falsy(isClickThrough(posts))
+test('isFullText: whole posts pass', t => {
+  t.ok(isFullText([{ content: long }, { content: long }, { content: '<p>short note</p>' }]))
 })
 
-test('isClickThrough: true when all posts have no meaningful content', t => {
-  const posts = [
-    { content: '<p>Read more</p>' },
-    { content: '' },
-    { content: '<a href="http://x.com">click</a>' }
-  ]
-  t.ok(isClickThrough(posts))
+test('isFullText: posts ending in read more are excerpts, however long', t => {
+  const teaser = { content: long + '<a href="/p">Continue reading &rarr;</a>' }
+  t.falsy(isFullText([teaser, teaser, { content: long }]))
+  t.falsy(isFullText([{ content: long + ' [&hellip;]' }, { content: long + '...' }]))
 })
 
-test('isClickThrough: true when content strips to fewer than 100 chars across all posts', t => {
-  const posts = Array.from({ length: 5 }, () => ({ content: '<p>short</p>' }))
-  t.ok(isClickThrough(posts))
-})
-
-test('isClickThrough: false when one post has >100 chars of text', t => {
-  const longText = 'a'.repeat(101)
-  const posts = [{ content: `<p>${longText}</p>` }, { content: '' }]
-  t.falsy(isClickThrough(posts))
+test('isFullText: a typical post too short to be the whole thing fails', t => {
+  t.falsy(isFullText(Array.from({ length: 5 }, () => ({ content: '<p>A two-line summary of the post.</p>' }))))
 })
 
 // readLimitedText — enforces fetchSource's response-size cap by counting
@@ -210,7 +200,16 @@ test('readLimitedText: returns null when the stream exceeds the byte limit', asy
 // buildCurateCandidates
 
 const noProbe = async () => null
-const feedProbe = async () => 'https://found.example.com/feed'
+// a feed that passes every check: full posts, a few a month, one author, recent
+const DAY = 86400000
+const goodPosts = (n = 4, { len = 800, every = 10, author = 'me', start = Date.now() - DAY, extra = '' } = {}) =>
+  Array.from({ length: n }, (_, i) => ({
+    content: `<p>${'word '.repeat(len / 5)}</p>${extra}`,
+    date: new Date(start - i * every * DAY).toUTCString(),
+    author
+  }))
+const feedOf = (posts, more = {}) => ({ feedUrl: 'https://found.example.com/feed', posts, ...more })
+const feedProbe = async () => feedOf(goodPosts())
 
 const makePost = (links) => ({
   content: links.map(href => `<a href="${href}">link</a>`).join(' ')
@@ -242,7 +241,9 @@ const makeDb = ({ candidates: initCandidates = [], dismissed: initDismissed = []
             sources: JSON.stringify(c.sources || []),
             first_seen: c.firstSeen || null,
             probed_at: c.probedAt || null,
-            feed_url: c.feedUrl || null
+            feed_url: c.feedUrl || null,
+            stats: c.stats ? JSON.stringify(c.stats) : null,
+            rejected: c.rejected || null
           }))
         }
       }
@@ -254,11 +255,11 @@ const makeDb = ({ candidates: initCandidates = [], dismissed: initDismissed = []
       if (sql.includes('DELETE FROM curate_candidates')) {
         rows = rows.filter(r => r.domain !== args[0])
       } else if (sql.includes('INSERT INTO curate_candidates')) {
-        const [domain, score, sourcesJson, firstSeen, probedAt, feedUrl] = args
-        rows.push({ domain, score, sources: JSON.parse(sourcesJson || '[]'), firstSeen, probedAt, feedUrl })
+        const [domain, score, sourcesJson, firstSeen, probedAt, feedUrl, stats, rejected] = args
+        rows.push({ domain, score, sources: JSON.parse(sourcesJson || '[]'), firstSeen, probedAt, feedUrl, stats: stats ? JSON.parse(stats) : null, rejected })
       } else if (sql.includes('UPDATE curate_candidates')) {
-        const [score, sourcesJson, firstSeen, probedAt, feedUrl, domain] = args
-        rows = rows.map(r => r.domain === domain ? { domain, score, sources: JSON.parse(sourcesJson || '[]'), firstSeen, probedAt, feedUrl } : r)
+        const [score, sourcesJson, firstSeen, probedAt, feedUrl, stats, rejected, domain] = args
+        rows = rows.map(r => r.domain === domain ? { domain, score, sources: JSON.parse(sourcesJson || '[]'), firstSeen, probedAt, feedUrl, stats: stats ? JSON.parse(stats) : null, rejected } : r)
       }
     }
   })
@@ -358,7 +359,7 @@ test('buildCurateCandidates: limits new probes per run', async t => {
 
 test('buildCurateCandidates: updates score for existing candidate', async t => {
   const db = makeDb({
-    candidates: [{ domain: 'known.com', feedUrl: 'https://known.com/feed', score: 1, sources: ['old.com'] }]
+    candidates: [{ domain: 'known.com', feedUrl: 'https://known.com/feed', score: 1, sources: ['old.com'], stats: { posts: 3 } }]
   })
   const freshData = makeFreshData([
     ['https://new1.com/feed', ['https://known.com/post']],
@@ -382,7 +383,7 @@ test('buildCurateCandidates: a failed probe is remembered, so the next domain ge
     ])
   )
   const probed = []
-  const probe = async domain => { probed.push(domain); return domain === 'delta.com' ? 'https://delta.com/feed' : null }
+  const probe = async domain => { probed.push(domain); return domain === 'delta.com' ? feedOf(goodPosts(), { feedUrl: 'https://delta.com/feed' }) : null }
   await buildCurateCandidates(db, [], freshData, probe)
   await buildCurateCandidates(db, [], freshData, probe)
   // first run burns 3 feedless domains, second run reaches the 4th
@@ -614,4 +615,141 @@ test('buildCurateCandidates: ties are shuffled, not probed in scan order', async
   await buildCurateCandidates(db, [], freshData, async d => { probed.push(d); return null }, 'x', () => 0)
   t.not(probed[0], 'first.com')
   t.is(probed.length, 3)
+})
+
+// the machine's checks
+
+test('feedStats: pace is posts over the span the feed covers', t => {
+  // 10 items a day apart - a daily feed even though it only holds 10
+  t.ok(feedStats(feedOf(goodPosts(10, { every: 1 })), 'x.com').perMonth > 25)
+  t.ok(feedStats(feedOf(goodPosts(4, { every: 10 })), 'x.com').perMonth < 4)
+  t.is(feedStats(feedOf(goodPosts(2)), 'x.com').perMonth, null)
+})
+
+test('feedStats: authors are counted once, ignoring case and blanks', t => {
+  const posts = goodPosts(4)
+  posts[0].author = 'Me'; posts[1].author = ''; posts[2].author = 'you'
+  t.is(feedStats(feedOf(posts), 'x.com').authors, 2)
+})
+
+test('feedStats: link-backs are curated blogs it links to, not itself', t => {
+  const extra = '<a href="https://www.friend.blog/p">f</a> <a href="https://x.com/self">s</a> <a href="https://stranger.com/">z</a>'
+  const s = feedStats(feedOf(goodPosts(3, { extra })), 'x.com', new Set(['friend.blog', 'x.com']))
+  t.deepEqual(s.linksBack, ['friend.blog'])
+})
+
+test('feedStats: substack shows up by generator or by domain', t => {
+  t.ok(feedStats(feedOf(goodPosts(), { generator: 'Substack' }), 'someone.com').substack)
+  t.ok(feedStats(feedOf(goodPosts()), 'someone.substack.com').substack)
+  t.falsy(feedStats(feedOf(goodPosts()), 'someone.com').substack)
+})
+
+test('rejectReason: a good blog passes', t => {
+  t.is(rejectReason(feedStats(feedOf(goodPosts()), 'x.com')), null)
+})
+
+test('rejectReason: each hard no has its reason', t => {
+  const now = Date.now()
+  const stats = (posts, more) => feedStats(feedOf(posts, more), 'x.com')
+  t.is(rejectReason(stats([])), 'empty')
+  t.is(rejectReason(stats(goodPosts(4, { len: 50 }))), 'truncated')
+  t.is(rejectReason(stats(goodPosts(4, { start: now - 200 * DAY }))), 'dead')
+  t.is(rejectReason(stats(goodPosts(20, { every: 0.5 }))), 'mag')
+  const group = goodPosts(4).map((p, i) => ({ ...p, author: `writer${i}` }))
+  t.is(rejectReason(stats(group)), 'group')
+  t.is(rejectReason(stats(goodPosts(), { language: 'de-DE' })), 'language')
+  t.is(rejectReason(stats(goodPosts(), { language: 'en-US' })), null)
+})
+
+test('rejectReason: unknowns pass - no dates is not dead, no bylines is not a group', t => {
+  const posts = goodPosts(4).map(p => ({ content: p.content }))
+  t.is(rejectReason(feedStats(feedOf(posts), 'x.com')), null)
+})
+
+test('statsLine: the why behind a row', t => {
+  const extra = '<a href="https://friend.blog/p">f</a>'
+  const s = feedStats(feedOf(goodPosts(4, { extra }), { generator: 'Substack' }), 'x.com', new Set(['friend.blog']))
+  t.is(statsLine(s), `${s.perMonth} posts/mo · 1 author · full text · links back to 1 · substack`)
+  t.is(statsLine(null), '')
+})
+
+test('feedInfo: language and generator from the channel, not the items', t => {
+  t.deepEqual(feedInfo('<rss><channel><language>en-us</language><generator><![CDATA[Substack]]></generator><item><language>de</language></item>'),
+    { language: 'en-us', generator: 'Substack' })
+  t.deepEqual(feedInfo('<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="fr"><generator uri="https://gohugo.io/">Hugo</generator><entry>'),
+    { language: 'fr', generator: 'Hugo' })
+  t.deepEqual(feedInfo('<rss><channel><title>x</title>'), { language: null, generator: null })
+})
+
+const twoVotes = domain => makeFreshData([
+  ['https://a.com/feed', [`https://${domain}/post`]],
+  ['https://b.com/feed', [`https://${domain}/post`]]
+])
+
+test('buildCurateCandidates: a machine no is kept with its reason, not dropped', async t => {
+  const db = makeDb()
+  await buildCurateCandidates(db, [], twoVotes('teaser.com'), async () => feedOf(goodPosts(4, { len: 50 })))
+  const entry = (await getCandidates(db)).find(c => c.domain === 'teaser.com')
+  t.is(entry.rejected, 'truncated')
+  t.is(entry.feedUrl, 'https://found.example.com/feed')
+})
+
+test('buildCurateCandidates: a machine no is rechecked after 90 days, not before', async t => {
+  const probed = []
+  const probe = async d => { probed.push(d); return feedOf(goodPosts()) }
+  const at = days => new Date(Date.now() - days * DAY).toISOString()
+  const row = days => ({ domain: 'teaser.com', score: 2, sources: ['a.com', 'b.com'], probedAt: at(days), feedUrl: 'https://teaser.com/feed', stats: { posts: 4 }, rejected: 'truncated' })
+
+  await buildCurateCandidates(makeDb({ candidates: [row(60)] }), [], twoVotes('teaser.com'), probe)
+  t.is(probed.length, 0)
+
+  const db = makeDb({ candidates: [row(91)] })
+  await buildCurateCandidates(db, [], twoVotes('teaser.com'), probe)
+  t.is(probed.join(), 'teaser.com')
+  t.is((await getCandidates(db))[0].rejected, null)
+})
+
+test('buildCurateCandidates: a row from before the checks gets read once', async t => {
+  const probed = []
+  const db = makeDb({ candidates: [{ domain: 'old.com', score: 2, sources: ['a.com', 'b.com'], firstSeen: '2026-01-01T00:00:00.000Z', feedUrl: 'https://old.com/feed' }] })
+  await buildCurateCandidates(db, [], twoVotes('old.com'), async d => { probed.push(d); return feedOf(goodPosts()) })
+  const entry = (await getCandidates(db))[0]
+  t.is(probed.join(), 'old.com')
+  t.ok(entry.stats)
+  t.is(entry.firstSeen, '2026-01-01T00:00:00.000Z')
+})
+
+test('buildCurateCandidates: link-backs are counted against discover blogs', async t => {
+  const db = makeDb()
+  const extra = '<a href="https://a.com/x">a</a>'
+  await buildCurateCandidates(db, ['https://a.com/feed', 'https://b.com/feed'], twoVotes('neighbor.com'), async () => feedOf(goodPosts(4, { extra })))
+  t.deepEqual((await getCandidates(db))[0].stats.linksBack, ['a.com'])
+})
+
+test('buildCurateCandidates: the rebuild button takes a bigger bite', async t => {
+  const db = makeDb()
+  const domains = Array.from({ length: 12 }, (_, i) => `blog${i}.com`)
+  const freshData = makeFreshData([['https://a.com/feed', domains.map(d => `https://${d}/p`)]])
+  const res = await buildCurateCandidates(db, [], freshData, feedProbe, 'x', Math.random, { probes: 10 })
+  t.is(res.probed, 10)
+  t.is(res.passed, 10)
+  t.is((await getCandidates(db)).length, 10)
+})
+
+test('buildCurateCandidates: nothing is capped away', async t => {
+  const db = makeDb()
+  const domains = Array.from({ length: 160 }, (_, i) => `blog${i}.com`)
+  const freshData = makeFreshData([['https://a.com/feed', domains.map(d => `https://${d}/p`)]])
+  await buildCurateCandidates(db, [], freshData, noProbe, 'x', Math.random, { probes: 160 })
+  t.is((await getCandidates(db)).length, 160)
+})
+
+// dupes
+
+test('sameBlog: www, scheme and feed path do not make a new blog', t => {
+  const have = ['https://example.com/feed', 'https://other.blog/rss.xml']
+  t.is(sameBlog('http://www.example.com/rss.xml', have), 'https://example.com/feed')
+  t.is(sameBlog('https://Example.com/atom.xml', have), 'https://example.com/feed')
+  t.is(sameBlog('https://sub.example.com/feed', have), null)
+  t.is(sameBlog('not a url', have), null)
 })

@@ -6,6 +6,7 @@ import { getMentions, saveMentions } from './db-mentions.js'
 import { urlMatchKey } from './url-normalize.js'
 import { getCronState, setCronState } from './db-auth.js'
 import { savePostTags } from './db-search.js'
+import { feedStats, rejectReason } from './feed-stats.js'
 
 export const VIDEO_DOMAINS = new Set(['youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv', 'rumble.com'])
 
@@ -20,6 +21,15 @@ const parseSiteUrl = (xml) => {
   const rss = stripped.match(/<link>([^<]+)<\/link>/i)
   const url = rss?.[1]?.trim()
   return url?.startsWith('http') ? url : null
+}
+
+// what the feed says about itself: <language> / xml:lang, and <generator>
+// (Substack, WordPress...). only the channel part, before the first item
+export const feedInfo = (xml) => {
+  const head = xml.split(/<(item|entry)[\s>]/i)[0]
+  const language = (head.match(/<language>\s*([^<\s]+)\s*<\/language>/i) || head.match(/<feed\b[^>]*xml:lang=["']([^"']+)["']/i))?.[1] || null
+  const generator = head.match(/<generator\b[^>]*>([\s\S]*?)<\/generator>/i)?.[1]?.replace(/<!\[CDATA\[|\]\]>/g, '').trim() || null
+  return { language, generator }
 }
 
 const stripProcessingInstructions = (xml) => xml.replace(/<\?(?!xml\s)[^?]*\?>/gi, '')
@@ -72,7 +82,7 @@ export const fetchSource = async (url, limit = 3, domain) => {
       const text = await readLimitedText(res, MAX_RESPONSE_BYTES)
       if (text === null) return { posts: null, config: { url }, statusCode: res.status, error: 'response too large' }
       const xml = stripProcessingInstructions(text)
-      return { posts: parseFeed(xml, { url, limit }), config: { url, limit }, siteUrl: parseSiteUrl(xml), statusCode: res.status }
+      return { posts: parseFeed(xml, { url, limit }), config: { url, limit }, siteUrl: parseSiteUrl(xml), ...feedInfo(xml), statusCode: res.status }
     }
     return { posts: null, config: { url }, statusCode: 0, error: 'too many redirects' }
   } catch (err) {
@@ -241,9 +251,11 @@ const SKIP_CURATE_DOMAINS = new Set([
   'doi.org', 'commons.wikimedia.org', 'kickstarter.com', 'buttondown.com'
 ])
 
-// probes are mostly waiting on the network, not cpu, so this can be
-// generous - a wall of feedless news sites shouldn't take a week to clear
-export const PROBES_PER_RUN = 10
+// a probe now reads the whole feed, and parsing is cpu - 3 a run fits the
+// free plan forever. the rebuild button takes bigger bites.
+export const PROBES_PER_RUN = 3
+export const REBUILD_PROBES = 50
+const PROBE_CONCURRENCY = 5
 
 // Reads just the start of a response - enough to see <rss or <feed - then
 // hangs up, so a probe never downloads someone's whole homepage twice
@@ -299,7 +311,17 @@ export const probeFeedUrl = async (domain, myDomain, _fetch = fetch) => {
   return null
 }
 
+// find the feed, then read it for real so the checks have posts to look at
+export const probeCandidate = async (domain, myDomain) => {
+  const feedUrl = await probeFeedUrl(domain, myDomain)
+  if (!feedUrl) return null
+  const r = await fetchSource(feedUrl, 20, myDomain)
+  return { feedUrl, posts: r.posts || [], siteUrl: r.siteUrl || null, language: r.language || null, generator: r.generator || null }
+}
+
 const PROBE_RETRY_MS = 30 * 86400000
+// a machine no is soft - blogs change, and the checks are guesses
+const REJECT_RETRY_MS = 90 * 86400000
 
 // Fewest votes first. One or two of your blogs linking someone is a friend
 // or a find; 3+ is overwhelmingly a magazine, a platform or a hot take.
@@ -317,8 +339,8 @@ export const blogDomain = (feedUrl, data) =>
 // rows hold feed urls, so both spellings land on the same key
 const voters = sources => new Set(sources.map(s => host(s) || s)).size
 
-export const buildCurateCandidates = async (db, sourceUrls, freshData, _probe = probeFeedUrl, myDomain, _random = Math.random) => {
-  if (!freshData.size) return
+export const buildCurateCandidates = async (db, sourceUrls, freshData, _probe = probeCandidate, myDomain, _random = Math.random, { probes = PROBES_PER_RUN, now: nowMs = Date.now() } = {}) => {
+  if (!freshData.size) return { probed: 0, passed: 0 }
 
   const knownDomains = new Set()
   for (const url of sourceUrls) {
@@ -357,7 +379,7 @@ export const buildCurateCandidates = async (db, sourceUrls, freshData, _probe = 
     }
   }
 
-  if (!domainSources.size) return
+  if (!domainSources.size) return { probed: 0, passed: 0 }
 
   const scored = [...domainSources.entries()]
     .map(([domain, srcs]) => ({ domain, score: voters([...srcs]), sources: [...srcs] }))
@@ -386,22 +408,40 @@ export const buildCurateCandidates = async (db, sourceUrls, freshData, _probe = 
     }
   }
 
-  const now = new Date().toISOString()
+  const now = new Date(nowMs).toISOString()
+  const age = c => nowMs - Date.parse(c.probedAt || 0)
   // a failed probe is remembered as a row with no feed - without that, the
   // same top 3 feedless domains (bsky.app and friends) got re-probed every
-  // run and nothing behind them ever got a turn. failures retry after a month.
-  const live = candidates.filter(c => c.feedUrl || (Date.now() - Date.parse(c.probedAt || 0)) < PROBE_RETRY_MS)
+  // run and nothing behind them ever got a turn. failures retry after a month,
+  // machine no's after three. a row with a feed but no stats predates the
+  // checks and gets read once like a new one.
+  const live = candidates.filter(c => {
+    if (!c.feedUrl) return age(c) < PROBE_RETRY_MS
+    if (c.rejected) return age(c) < REJECT_RETRY_MS
+    return !!c.stats
+  })
   const tried = new Set(live.map(c => c.domain))
-  const newToProbe = scored.filter(({ domain }) => !tried.has(domain)).slice(0, PROBES_PER_RUN)
+  const newToProbe = scored.filter(({ domain }) => !tried.has(domain)).slice(0, probes)
 
-  for (const { domain, score, sources } of newToProbe) {
-    const feedUrl = await _probe(domain, myDomain)
-    live.push({ domain, score, sources, firstSeen: now, probedAt: now, feedUrl: feedUrl || null })
+  const probeOne = async ({ domain, score, sources }) => {
+    const found = await _probe(domain, myDomain)
+    const stats = found ? feedStats(found, domain, knownDomains) : null
+    const rejected = stats ? rejectReason(stats, nowMs) : null
+    // a re-probed row keeps its votes and first sighting
+    const prev = candidates.find(c => c.domain === domain)
+    return { domain, score: prev?.score ?? score, sources: prev?.sources ?? sources, firstSeen: prev?.firstSeen || now, probedAt: now, feedUrl: found?.feedUrl || null, stats, rejected }
+  }
+  // a few at a time - the rebuild button's 50 one by one ran past a
+  // minute, and cloudflare hangs up on a request at 100s
+  for (let i = 0; i < newToProbe.length; i += PROBE_CONCURRENCY) {
+    live.push(...await Promise.all(newToProbe.slice(i, i + PROBE_CONCURRENCY).map(probeOne)))
   }
 
-  const found = live.filter(c => c.feedUrl).sort(quietFirst).slice(0, 50)
-  const failed = live.filter(c => !c.feedUrl).sort(quietFirst).slice(0, 100)
-  await saveCandidates(db, [...found, ...failed])
+  // no cap: the checks do the culling now, and every row is a probe we
+  // never have to repeat. a row costs one write when it changes.
+  await saveCandidates(db, live)
+  const probedNow = live.slice(live.length - newToProbe.length)
+  return { probed: newToProbe.length, passed: probedNow.filter(c => c.feedUrl && !c.rejected).length }
 }
 
 // Daily, not every run: it scores against every source's stored posts (the
@@ -409,12 +449,12 @@ export const buildCurateCandidates = async (db, sourceUrls, freshData, _probe = 
 // the heaviest pass here, and suggestions don't need to be hourly.
 const CURATE_EVERY_MS = 86400000
 
-export const maybeBuildCurateCandidates = async (db, allSourceUrls, freshData, myDomain, _probe = probeFeedUrl, now = Date.now()) => {
+export const maybeBuildCurateCandidates = async (db, allSourceUrls, freshData, myDomain, _probe = probeCandidate, now = Date.now()) => {
   const last = await getCronState(db, 'curate:lastRun')
   if (last && now - Date.parse(last) < CURATE_EVERY_MS) return false
   const stored = await getSourceDataBulk(db, allSourceUrls.filter(u => !freshData.has(u)))
   const all = new Map([...stored, ...freshData])
-  await buildCurateCandidates(db, allSourceUrls, all, _probe, myDomain)
+  await buildCurateCandidates(db, allSourceUrls, all, _probe, myDomain, Math.random, { now })
   await setCronState(db, 'curate:lastRun', new Date(now).toISOString())
   return true
 }

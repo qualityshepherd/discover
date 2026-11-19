@@ -338,7 +338,7 @@ const BATCH_STATUS_LABEL = {
   duplicate: 'already in discover',
   pending: 'already pending',
   blocked: 'blocked',
-  'click-through': 'click-through',
+  truncated: 'excerpts only',
   'no-content': 'no content',
   'fetch-error': 'fetch error',
   'invalid-url': 'invalid url',
@@ -357,8 +357,8 @@ $('btn-dc-batch-validate').addEventListener('click', async () => {
   const el = $('dc-batch-results')
   if (!Array.isArray(results)) { el.innerHTML = '<p class="muted">error</p>'; return }
   el.innerHTML = results.map(r => {
-    const cls = r.status === 'valid' ? 'valid' : r.status === 'duplicate' || r.status === 'pending' ? 'pending-q' : 'error'
-    const label = BATCH_STATUS_LABEL[r.status] || r.status
+    const cls = r.status === 'valid' && !r.duplicateOf ? 'valid' : r.status === 'valid' || r.status === 'duplicate' || r.status === 'pending' ? 'pending-q' : 'error'
+    const label = r.duplicateOf ? `same blog as ${r.duplicateOf}` : BATCH_STATUS_LABEL[r.status] || r.status
     const addBtn = r.status === 'valid'
       ? `<button class="btn btn-sm dc-batch-add-pending" data-url="${escHtml(r.url)}" data-title="${escHtml(r.title || '')}">+ pending</button>`
       : ''

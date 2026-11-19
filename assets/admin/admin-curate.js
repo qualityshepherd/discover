@@ -11,7 +11,8 @@ if (mentionsBtn) {
     const res = await api('POST', '/api/discover/admin/build-link-graph')
     mentionsBtn.disabled = false
     mentionsBtn.textContent = 'rebuild mentions'
-    if (scanStatus) scanStatus.textContent = res.error ? `error: ${res.error}` : `rebuilt mentions from ${res.sources} sources`
+    if (scanStatus) scanStatus.textContent = res.error ? `error: ${res.error}` : `rebuilt mentions from ${res.sources} sources · checked ${res.probed || 0} candidates, ${res.passed || 0} passed`
+    if (!res.error) await renderCurate()
   })
 }
 
@@ -57,6 +58,8 @@ function renderPending (list, playlists) {
     <div class="dc-pending-row" data-pending-url="${escHtml(p.url)}">
       <div class="dc-pending-url"><a href="${escHtml(p.url)}" target="_blank" rel="noopener">${escHtml(p.url)}</a></div>
       <div class="dc-pending-meta">submitted ${timeAgo(p.submittedAt)}</div>
+      ${p.line ? `<div class="dc-pending-meta">${escHtml(p.line)}</div>` : ''}
+      ${p.duplicateOf ? `<div class="dc-pending-meta">⚠ same blog as <a href="${escHtml(p.duplicateOf)}" target="_blank" rel="noopener">${escHtml(p.duplicateOf)}</a></div>` : ''}
       <div class="dc-pending-actions">
         <select class="dc-pending-playlist">
           <option value="">no playlist</option>
@@ -128,6 +131,7 @@ function renderCandidates (list) {
       </div>
       <div class="dc-pending-meta"><a href="${escHtml(c.feedUrl)}" target="_blank" rel="noopener">${escHtml(c.feedUrl)}</a></div>
       <div class="dc-pending-meta">linked by ${linkedBy(c.sources)}</div>
+      ${c.line ? `<div class="dc-pending-meta">${escHtml(c.line)}</div>` : ''}
       <div class="dc-pending-actions">
         <button class="btn btn-sm btn-primary curate-approve">→ suggested</button>
         <button class="btn btn-sm btn-danger curate-dismiss">dismiss</button>

@@ -1,5 +1,5 @@
 import { memberByToken, isOwnerPubkey, isRateLimited, incrementAttempt } from './auth.js'
-import { json, parseJsonBody, sameBlog, bareHost } from './utils.js'
+import { json, parseJsonBody, sameBlog, bareHost, cleanFeedUrl } from './utils.js'
 import { getSourceDataBulk, getAllSourceUrls, getStaleSourceMeta, hasNewSources } from './db-sources.js'
 import {
   computeTags, getFeed, getFeeds, getFilteredFeeds, getTagCounts,
@@ -121,7 +121,7 @@ const handleSubmit = async (req, db, domain) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
 
-  const url = body.url?.trim().replace(/\/+$/, '')
+  const url = cleanFeedUrl(body.url)
   if (!url) return json({ error: 'url required' }, 400)
   if (url.length > 2000) return json({ error: 'url too long' }, 400)
   if (!URL.canParse(url)) return json({ error: 'invalid url' }, 400)
@@ -252,7 +252,7 @@ export const handleDiscover = async (req, env, ctx) => {
   }
   if (method === 'GET' && path === '/api/discover/admin/pending') return handlePendingList(db)
   if (method === 'POST' && path === '/api/discover/admin/validate') return handleValidate(req, db, env.DOMAIN_NAME)
-  if (method === 'POST' && path === '/api/discover/admin/approve') return handleApprove(req, db)
+  if (method === 'POST' && path === '/api/discover/admin/approve') return handleApprove(req, db, env.DOMAIN_NAME)
   if (method === 'POST' && path === '/api/discover/admin/add') return handleAdd(req, db)
   if (method === 'POST' && path === '/api/discover/admin/source') return handleSourceRegister(req, db, env.DOMAIN_NAME)
 

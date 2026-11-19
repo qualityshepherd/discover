@@ -10,6 +10,11 @@ export const parseJsonBody = async (req) => {
 
 export const xmlAttr = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
+// the one spelling of a feed url we store: trimmed, no trailing slash. the
+// curate path once kept "/feed/" while refresh stripped it, so one feed lived
+// under two keys and the playlist's copy was never fetched
+export const cleanFeedUrl = u => String(u || '').trim().replace(/\/+$/, '')
+
 // hostname without www, '' for anything that isn't a url
 export const bareHost = u => { try { return new URL(u).hostname.replace(/^www\./, '').toLowerCase() } catch { return '' } }
 

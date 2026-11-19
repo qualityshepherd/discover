@@ -62,7 +62,7 @@ function renderPending (list, playlists) {
       ${p.duplicateOf ? `<div class="dc-pending-meta">⚠ same blog as <a href="${escHtml(p.duplicateOf)}" target="_blank" rel="noopener">${escHtml(p.duplicateOf)}</a></div>` : ''}
       <div class="dc-pending-actions">
         <select class="dc-pending-playlist">
-          <option value="">no playlist</option>
+          <option value="">pick a playlist</option>
           ${playlistOptions}
         </select>
         <button class="btn btn-sm btn-primary dc-pending-approve">approve</button>

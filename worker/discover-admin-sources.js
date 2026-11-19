@@ -1,10 +1,11 @@
-import { json, parseJsonBody, sameBlog } from './utils.js'
+import { json, parseJsonBody, sameBlog, cleanFeedUrl } from './utils.js'
 import { isFullText } from './feed-stats.js'
 import { makeId, getSourceData, deleteSourceData, getAllSourceUrls } from './db-sources.js'
 import { getFeed, saveFeed, getFeeds, removeFromIndex, getFeedsBySourceUrl, generateUniqueSlug, slugify } from './db-feeds.js'
 import { isBlocked, isUrlBlocked, getPending, savePending, getBlocked, saveBlocked } from './db-moderation.js'
 import { deletePostTags } from './db-search.js'
 import { fetchAndSaveSource, applySourceDatas, fetchSource } from './fetch-source.js'
+import { addSourceToPlaylist } from './discover-admin-playlists.js'
 
 // POST /api/discover/admin/validate — batch URL validation
 export const handleValidate = async (req, db, domain) => {
@@ -20,7 +21,7 @@ export const handleValidate = async (req, db, domain) => {
   const blockedList = blocked || []
 
   const results = await Promise.all(urls.map(async (rawUrl) => {
-    const url = rawUrl?.trim().replace(/\/+$/, '')
+    const url = cleanFeedUrl(rawUrl)
     if (!url || !URL.canParse(url)) return { url: rawUrl, status: 'invalid-url' }
     if (isUrlBlocked(url, blockedList)) return { url, status: 'blocked' }
     if (allSourceUrls.has(url)) return { url, status: 'duplicate' }
@@ -54,25 +55,20 @@ export const handlePendingReject = async (req, db) => {
 export const handlePendingList = async (db) => json(await getPending(db))
 
 // POST /api/discover/admin/approve
-export const handleApprove = async (req, db) => {
+// a feed lives in playlists - approving with none used to drop it on the floor
+export const handleApprove = async (req, db, domain) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
+  if (!body.playlistId) return json({ error: 'pick a playlist' }, 400)
 
   const pending = await getPending(db)
-  const idx = pending.findIndex(f => f.url === body.url)
-  if (idx === -1) return json({ error: 'not found' }, 404)
-  const item = pending[idx]
-  const remaining = pending.filter((_, i) => i !== idx)
+  const item = pending.find(f => f.url === body.url)
+  if (!item) return json({ error: 'not found' }, 404)
+  const feed = await getFeed(db, body.playlistId)
+  if (!feed) return json({ error: 'playlist not found' }, 404)
 
-  if (body.playlistId) {
-    const feed = await getFeed(db, body.playlistId)
-    if (!feed) return json({ error: 'playlist not found' }, 404)
-    const sources = [...new Set([...(feed.sources || []), item.url])]
-    await Promise.all([saveFeed(db, { ...feed, sources }), savePending(db, remaining)])
-    return json({ ok: true })
-  }
-
-  await savePending(db, remaining)
+  await addSourceToPlaylist(db, feed, item.url, domain)
+  await savePending(db, pending.filter(f => f !== item))
   return json({ ok: true })
 }
 
@@ -148,7 +144,7 @@ export const handleDelete = async (db, id) => {
 // POST /api/discover/admin/source/refresh
 export const handleSourceRefresh = async (req, db, domain) => {
   const body = await parseJsonBody(req)
-  const url = body?.url?.trim().replace(/\/+$/, '')
+  const url = cleanFeedUrl(body?.url)
   if (!url) return json({ error: 'url required' }, 400)
   const { indexEntry } = await fetchAndSaveSource(db, url, domain)
   return json({ ok: true, source: indexEntry })
@@ -158,7 +154,7 @@ export const handleSourceRefresh = async (req, db, domain) => {
 export const handleSourceRegister = async (req, db, domain) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
-  const url = body.url?.trim().replace(/\/+$/, '')
+  const url = cleanFeedUrl(body.url)
   if (!url) return json({ error: 'url required' }, 400)
   if (!URL.canParse(url)) return json({ error: 'invalid url' }, 400)
   const existing = await getSourceData(db, url)
@@ -177,7 +173,7 @@ export const handleSourceEdit = async (req, db, domain) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
   const oldUrl = body.oldUrl?.trim()
-  const newUrl = body.newUrl?.trim().replace(/\/+$/, '')
+  const newUrl = cleanFeedUrl(body.newUrl)
   if (!oldUrl || !newUrl) return json({ error: 'oldUrl and newUrl required' }, 400)
   if (!URL.canParse(newUrl)) return json({ error: 'invalid url' }, 400)
 
@@ -211,7 +207,7 @@ export const handleSourceEdit = async (req, db, domain) => {
 export const handleSourceDelete = async (req, db) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
-  const url = body.url?.trim().replace(/\/+$/, '')
+  const url = cleanFeedUrl(body.url)
   if (!url) return json({ error: 'url required' }, 400)
 
   const affected = await getFeedsBySourceUrl(db, url)

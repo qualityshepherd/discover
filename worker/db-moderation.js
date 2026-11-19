@@ -1,3 +1,5 @@
+import { cleanFeedUrl } from './utils.js'
+
 const parseStats = s => { try { return s ? JSON.parse(s) : null } catch { return null } }
 
 export const getPending = async (db) => {
@@ -9,7 +11,7 @@ export const savePending = async (db, list) => {
   const stmts = [db.prepare('DELETE FROM pending')]
   for (const item of list) {
     stmts.push(db.prepare('INSERT INTO pending (url, title, description, submitted_at, stats) VALUES (?,?,?,?,?)').bind(
-      item.url, item.title || '', item.description || '', item.submittedAt || new Date().toISOString(), item.stats ? JSON.stringify(item.stats) : null
+      cleanFeedUrl(item.url), item.title || '', item.description || '', item.submittedAt || new Date().toISOString(), item.stats ? JSON.stringify(item.stats) : null
     ))
   }
   await db.batch(stmts)

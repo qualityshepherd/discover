@@ -1,4 +1,4 @@
-import { json, parseJsonBody } from './utils.js'
+import { json, parseJsonBody, cleanFeedUrl } from './utils.js'
 import { getSourceData, deleteSourceData } from './db-sources.js'
 import { getFeed, saveFeed, isSourceReferencedElsewhere } from './db-feeds.js'
 import { deletePostTags } from './db-search.js'
@@ -8,26 +8,26 @@ import { fetchAndSaveSource, applySourceDatas } from './fetch-source.js'
 export const handlePlaylistSourceAdd = async (req, db, id, domain) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
-  const url = body.url?.trim().replace(/\/+$/, '')
+  const url = cleanFeedUrl(body.url)
   if (!url) return json({ error: 'url required' }, 400)
   const feed = await getFeed(db, id)
   if (!feed) return json({ error: 'not found' }, 404)
   if ((feed.sources || []).includes(url)) return json({ ok: true, existing: true })
-  feed.sources = [...(feed.sources || []), url]
+  await addSourceToPlaylist(db, feed, url, domain)
+  return json({ ok: true })
+}
 
-  let sourceData = await getSourceData(db, url)
-  if (!sourceData) {
-    const result = await fetchAndSaveSource(db, url, domain)
-    sourceData = result.sourceData
-  }
-
+// every way into a playlist goes through here: the feed gets fetched now,
+// not whenever the cron gets to it, so the playlist shows it right away
+export const addSourceToPlaylist = async (db, feed, rawUrl, domain) => {
+  const url = cleanFeedUrl(rawUrl)
+  feed.sources = [...new Set([...(feed.sources || []), url])]
+  const sourceData = await getSourceData(db, url) || (await fetchAndSaveSource(db, url, domain)).sourceData
   if (sourceData?.posts?.length) {
     feed.previewPosts = [...(feed.previewPosts || []), sourceData.posts[0]].sort((a, b) => new Date(b.date) - new Date(a.date))
     if (!feed.coverImage && sourceData.image) feed.coverImage = sourceData.image
   }
-
   await saveFeed(db, feed)
-  return json({ ok: true })
 }
 
 // POST /api/discover/admin/:id/refresh
@@ -59,7 +59,7 @@ export const handlePlaylistRefresh = async (db, id, domain) => {
 export const handlePlaylistSourceRemove = async (req, db, id) => {
   const body = await parseJsonBody(req)
   if (!body) return json({ error: 'invalid json' }, 400)
-  const url = body.url?.trim().replace(/\/+$/, '')
+  const url = cleanFeedUrl(body.url)
   if (!url) return json({ error: 'url required' }, 400)
   const [feed, stillReferenced] = await Promise.all([getFeed(db, id), isSourceReferencedElsewhere(db, url, id)])
   if (!feed) return json({ error: 'not found' }, 404)

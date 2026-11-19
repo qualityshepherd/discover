@@ -1,3 +1,5 @@
+import { cleanFeedUrl } from './utils.js'
+
 export const slugify = (title) =>
   (title || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'playlist'
 
@@ -82,8 +84,9 @@ export const saveFeed = async (db, feed, { syncChildren = true } = {}) => {
   const {
     id, slug, title, description, type, tags, coverImage, ownerPubkey, featured, imports,
     active, updateFrequency, lastChecked, lastUpdated, previewPosts,
-    addedAt, sources = []
+    addedAt
   } = feed
+  const sources = [...new Set((feed.sources || []).map(cleanFeedUrl).filter(Boolean))]
 
   await db.prepare(`
     INSERT INTO feeds

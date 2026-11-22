@@ -5,7 +5,7 @@ import { makeDb, rows } from '../helpers/db.js'
 import { handleDiscover } from '../../worker/discover.js'
 import { createSession } from '../../worker/db-auth.js'
 import { saveFeed, getFeed } from '../../worker/db-feeds.js'
-import { saveSourceData } from '../../worker/db-sources.js'
+import { saveSourceData, getStaleSourceMeta } from '../../worker/db-sources.js'
 import { savePostTags } from '../../worker/db-search.js'
 import { saveCandidates, getCandidates, getPending, savePending } from '../../worker/db-moderation.js'
 
@@ -160,6 +160,24 @@ test('playlist remove: taking a blog out of its last playlist keeps the blog', a
   t.deepEqual((await getFeed(db, 'p2')).sources, [])
   t.is(rows(db, 'SELECT url FROM sources').length, 1)
   t.is(rows(db, 'SELECT * FROM post_tags').length, 1)
+  // and the sources list still shows it, so it can go in another playlist
+  const { body } = await call('GET', '/api/discover/admin/sources')
+  t.deepEqual(body.map(s => s.url), [url])
+  // the cron's list doesn't
+  t.deepEqual(await getStaleSourceMeta(db), [])
+})
+
+test('playlist delete: the blogs keep their other playlists', async t => {
+  const { db, call } = await setup()
+  const url = 'https://shared.test/feed'
+  await saveSourceData(db, url, { posts: [{ url: 'https://shared.test/1', title: 'one' }] })
+  await saveFeed(db, { id: 'old', slug: 'old', title: 'old', sources: [url] })
+  await saveFeed(db, { id: 'new', slug: 'new', title: 'new', sources: [url] })
+
+  await call('DELETE', '/api/discover/admin/old')
+  t.is(await getFeed(db, 'old'), null)
+  t.deepEqual((await getFeed(db, 'new')).sources, [url])
+  t.deepEqual(rows(db, 'SELECT feed_id FROM feed_sources').map(r => r.feed_id), ['new'])
 })
 
 // validate

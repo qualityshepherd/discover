@@ -86,12 +86,16 @@ export const getAllSourceUrls = async (db) => {
   return rows.results.map(r => r.url)
 }
 
-// Fetch+frequency metadata for all sources in any feed — for cron stale check
-export const getStaleSourceMeta = async (db, { limit } = {}) => {
+// Fetch+frequency metadata for all sources in any feed — for cron stale check.
+// all: also blogs in no playlist, for the admin list
+export const getStaleSourceMeta = async (db, { limit, all } = {}) => {
+  const urls = all
+    ? 'SELECT source_url FROM feed_sources UNION SELECT url FROM sources'
+    : 'SELECT DISTINCT source_url FROM feed_sources'
   const sql = `
     SELECT fs.source_url AS url, s.last_fetched, s.frequency, s.latest_post_url, s.latest_post_date,
            s.image, s.added_at, s.status_code, s.error, s.has_posts, s.mention_count
-    FROM (SELECT DISTINCT source_url FROM feed_sources) fs
+    FROM (${urls}) fs
     LEFT JOIN sources s ON s.url = fs.source_url
     ORDER BY s.last_fetched ASC${limit ? ' LIMIT ?' : ''}
   `

@@ -59,6 +59,7 @@ function renderPending (list, playlists) {
       <div class="dc-pending-url"><a href="${escHtml(p.url)}" target="_blank" rel="noopener">${escHtml(p.url)}</a></div>
       <div class="dc-pending-meta">submitted ${timeAgo(p.submittedAt)}</div>
       ${p.line ? `<div class="dc-pending-meta">${escHtml(p.line)}</div>` : ''}
+      ${p.stats?.topTags?.length ? `<div class="dc-pending-meta">${p.stats.topTags.map(t => `#${escHtml(t)}`).join(' ')}</div>` : ''}
       ${p.duplicateOf ? `<div class="dc-pending-meta">⚠ same blog as <a href="${escHtml(p.duplicateOf)}" target="_blank" rel="noopener">${escHtml(p.duplicateOf)}</a></div>` : ''}
       <div class="dc-pending-actions">
         <select class="dc-pending-playlist">
@@ -132,6 +133,7 @@ function renderCandidates (list) {
       <div class="dc-pending-meta"><a href="${escHtml(c.feedUrl)}" target="_blank" rel="noopener">${escHtml(c.feedUrl)}</a></div>
       <div class="dc-pending-meta">linked by ${linkedBy(c.sources)}</div>
       ${c.line ? `<div class="dc-pending-meta">${escHtml(c.line)}</div>` : ''}
+      ${c.stats?.topTags?.length ? `<div class="dc-pending-meta">${c.stats.topTags.map(t => `#${escHtml(t)}`).join(' ')}</div>` : ''}
       <div class="dc-pending-actions">
         <button class="btn btn-sm btn-primary curate-approve">→ suggested</button>
         <button class="btn btn-sm btn-danger curate-dismiss">dismiss</button>

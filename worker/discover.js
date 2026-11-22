@@ -248,7 +248,7 @@ export const handleDiscover = async (req, env, ctx) => {
     return json({ feeds, tags: computeTags(feeds) })
   }
   if (method === 'GET' && path === '/api/discover/admin/sources') {
-    return json(await getStaleSourceMeta(db))
+    return json(await getStaleSourceMeta(db, { all: true }))
   }
   if (method === 'GET' && path === '/api/discover/admin/pending') return handlePendingList(db)
   if (method === 'POST' && path === '/api/discover/admin/validate') return handleValidate(req, db, env.DOMAIN_NAME)

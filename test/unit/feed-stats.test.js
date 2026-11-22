@@ -1,5 +1,5 @@
 import { unit as test } from '../testpup.js'
-import { isFullText, feedStats, rejectReason, statsLine } from '../../worker/feed-stats.js'
+import { isFullText, feedStats, rejectReason, statsLine, topTags } from '../../worker/feed-stats.js'
 import { DAY, goodPosts, feedOf } from '../helpers/feeds.js'
 
 // isFullText - discover's full-text rule
@@ -80,4 +80,20 @@ test('statsLine: the why behind a row', t => {
   const s = feedStats(feedOf(goodPosts(4, { extra }), { generator: 'Substack' }), 'x.com', new Set(['friend.blog']))
   t.is(statsLine(s), `${s.perMonth} posts/mo · 1 author · full text · links back to 1 · substack`)
   t.is(statsLine(null), '')
+})
+
+test('topTags: most used first, filler dropped, a post counts a tag once', t => {
+  const posts = [
+    { tags: ['osr', 'ttrpg', 'uncategorized'] },
+    { tags: ['osr', 'osr', 'dungeons'] },
+    { tags: ['ttrpg', 'osr'] },
+    {}
+  ]
+  t.deepEqual(topTags(posts), ['osr', 'ttrpg', 'dungeons'])
+  t.deepEqual(topTags([]), [])
+})
+
+test('feedStats: carries the top tags so a candidate row can show them', t => {
+  const posts = goodPosts(3).map(p => ({ ...p, tags: ['music', 'folk'] }))
+  t.deepEqual(feedStats(feedOf(posts), 'x.com').topTags, ['folk', 'music'])
 })

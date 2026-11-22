@@ -47,6 +47,14 @@ const postsPerMonth = (times) => {
   return Math.round((times.length - 1) / span * 30 * 10) / 10
 }
 
+// what the blog is about, by its own tags - the playlist hint
+const NOT_A_TOPIC = new Set(['uncategorized', 'uncategorised', 'general', 'misc', 'blog', 'post', 'posts', 'notes', 'note', 'article', 'articles', 'featured'])
+export const topTags = (posts, n = 6) => {
+  const counts = new Map()
+  for (const p of posts || []) for (const t of new Set(p.tags || [])) if (!NOT_A_TOPIC.has(t)) counts.set(t, (counts.get(t) || 0) + 1)
+  return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, n).map(([t]) => t)
+}
+
 // feed: { feedUrl, posts, siteUrl, language, generator }
 // known: domains already in discover, for link-backs
 export const feedStats = (feed, domain, known = new Set()) => {
@@ -62,6 +70,7 @@ export const feedStats = (feed, domain, known = new Set()) => {
   }
   const generator = feed?.generator || null
   return {
+    topTags: topTags(posts),
     posts: posts.length,
     perMonth: postsPerMonth(times),
     authors: new Set(posts.map(p => (p.author || '').trim().toLowerCase()).filter(Boolean)).size,

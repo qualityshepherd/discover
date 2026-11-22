@@ -136,8 +136,11 @@ export async function renderDcSources () {
 
   const playlistFilterEl = $('dc-sources-filter-playlist')
   if (playlistFilterEl) {
-    playlistFilterEl.innerHTML = '<option value="">all playlists</option>' +
+    // rebuilt every render, so keep the pick (and the "no playlist" option)
+    const picked = playlistFilterEl.value
+    playlistFilterEl.innerHTML = '<option value="">all playlists</option><option value="__none__">no playlist</option>' +
       [...playlists()].sort((a, b) => a.title.localeCompare(b.title)).map(e => `<option value="${escHtml(e.id)}">${escHtml(e.title)}</option>`).join('')
+    playlistFilterEl.value = [...playlistFilterEl.options].some(o => o.value === picked) ? picked : ''
   }
 
   const applySourceFilters = () => {

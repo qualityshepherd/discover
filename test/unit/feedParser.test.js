@@ -188,3 +188,20 @@ test('FeedParser: parseFeed img in content:encoded is found by extractFirstImage
   const [post] = parseFeed(xml, { url: 'https://example.com/feed.xml' })
   t.is(extractFirstImage(post.content), 'https://example.com/hero.jpg')
 })
+
+// feeds whose entries carry attributes parsed as empty: 19 curated blogs had no posts
+test('parseFeed: blogger atom - single-quoted xmlns, entries with attributes', t => {
+  const xml = [
+    '<?xml version=\'1.0\' encoding=\'UTF-8\'?><feed xmlns=\'http://www.w3.org/2005/Atom\' xmlns:gd="http://schemas.google.com/g/2005"><title>Righto</title>',
+    '<entry gd:etag=\'W/"abc"\'><title>One</title><link rel=\'alternate\' href=\'https://righto.test/1\'/><published>2026-11-01T00:00:00Z</published><content type=\'html\'>hi</content></entry>',
+    '<entry gd:etag=\'W/"def"\'><title>Two</title><link rel=\'alternate\' href=\'https://righto.test/2\'/><published>2026-10-01T00:00:00Z</published><content type=\'html\'>yo</content></entry></feed>'
+  ].join('')
+  t.deepEqual(parseFeed(xml, { url: 'https://righto.test/feed' }).map(p => p.title), ['One', 'Two'])
+})
+
+test('parseFeed: atom entry with xml:lang, rss item with rdf:about', t => {
+  const atom = '<feed xmlns="http://www.w3.org/2005/Atom"><entry xml:lang="en"><title>Ploum</title><link rel="alternate" href="https://p.test/1"/></entry></feed>'
+  t.deepEqual(parseFeed(atom, { url: 'https://p.test/atom.xml' }).map(p => p.title), ['Ploum'])
+  const rss = '<rss><channel><item rdf:about="https://r.test/1"><title>Rdf</title><link>https://r.test/1</link></item><items><x/></items></channel></rss>'
+  t.deepEqual(parseFeed(rss, { url: 'https://r.test/rss' }).map(p => p.title), ['Rdf'])
+})

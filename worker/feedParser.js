@@ -68,8 +68,9 @@ export const extractPostTags = (categoryXml, content) => {
   return [...tags].slice(0, 5)
 }
 
+// either quote style - blogger writes xmlns='...'
 export const isAtom = (xml) =>
-  xml.includes('xmlns="http://www.w3.org/2005/Atom"') ||
+  /xmlns=["']http:\/\/www\.w3\.org\/2005\/Atom["']/.test(xml) ||
   xml.trimStart().startsWith('<feed')
 
 export const parseFeedTitle = (xml, url = '') => {
@@ -83,7 +84,8 @@ export const parseFeedTitle = (xml, url = '') => {
 
 const splitItems = (xml) => {
   const items = []
-  const re = /<item>([\s\S]*?)<\/item>/gi
+  // attributes allowed: <item rdf:about=…>, <entry xml:lang=…>, blogger's <entry gd:etag=…>
+  const re = /<item\b[^>]*>([\s\S]*?)<\/item>/gi
   let match
   while ((match = re.exec(xml)) !== null) items.push(match[1])
   return items
@@ -124,7 +126,7 @@ const parseRssItem = (itemXml, feedMeta, isPodcast = false) => {
 
 const splitEntries = (xml) => {
   const entries = []
-  const re = /<entry>([\s\S]*?)<\/entry>/gi
+  const re = /<entry\b[^>]*>([\s\S]*?)<\/entry>/gi
   let match
   while ((match = re.exec(xml)) !== null) entries.push(match[1])
   return entries

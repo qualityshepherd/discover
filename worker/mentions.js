@@ -3,6 +3,7 @@
 import { json, xmlAttr } from './utils.js'
 import { getMentions, getMentionsForUrl } from './db-mentions.js'
 import { EDGE_CACHE_CONTROL } from './cache.js'
+import { urlMatchKey } from './url-normalize.js'
 
 // GET /api/mentions/for?url=<post-url> - the footer embed's endpoint.
 // CORS * on purpose: the snippet runs on other people's blogs, and this
@@ -21,9 +22,23 @@ export const handleMentionsForUrl = async (db, reqUrl) => {
 // window. Older ones are just a link - their words stay on their site.
 export const MENTIONS_FEED_FULL = 20
 
+// Rows are per (post, linked url); the feed is per post. Keeps the newest
+// row's place, links the most specific page it pointed at (a post beats /).
+export const onePerPost = (mentions) => {
+  const byPost = new Map()
+  for (const m of mentions) {
+    const seen = byPost.get(m.fromPost)
+    if (!seen) byPost.set(m.fromPost, m)
+    else if ((urlMatchKey(m.toUrl) || '').length > (urlMatchKey(seen.toUrl) || '').length) {
+      byPost.set(m.fromPost, { ...seen, toUrl: m.toUrl })
+    }
+  }
+  return [...byPost.values()]
+}
+
 // GET /api/mentions/:sourceId.xml
 export const handleMentionsFeed = async (db, sourceId, reqUrl) => {
-  const items = await getMentions(db, sourceId)
+  const items = onePerPost(await getMentions(db, sourceId))
   const domain = sourceId
   const base = new URL(reqUrl).origin
 

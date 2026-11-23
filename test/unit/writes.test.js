@@ -2,7 +2,8 @@
 import { unit as test } from '../testpup.js'
 import { makeDb, rows } from '../helpers/db.js'
 import { savePostTags } from '../../worker/db-search.js'
-import { saveMentions, getMentionsForUrl } from '../../worker/db-mentions.js'
+import { saveMentions, getMentionsForUrl, getSourceMentionCounts } from '../../worker/db-mentions.js'
+import { handleMentionsFeed } from '../../worker/mentions.js'
 import { buildLinkGraph } from '../../worker/link-graph.js'
 import { saveFeed } from '../../worker/db-feeds.js'
 import { saveCandidates, getCandidates, savePending, getPending } from '../../worker/db-moderation.js'
@@ -283,4 +284,20 @@ test('savePending: stats ride along on a pending row', async t => {
   const got = await getPending(db)
   t.is(got.find(p => p.url === 'https://x.blog/feed').stats.fullText, true)
   t.is(got.find(p => p.url === 'https://y.blog/feed').stats, null)
+})
+
+// zacharykai's People and Blogs reposts link both / and /pb - one post, two rows
+test('mention count and feed: one post linking two urls counts once', async t => {
+  const db = makeDb()
+  await saveMentions(db, 'bob.test', [
+    mention('https://a.test/pb-1', { toUrl: 'https://bob.test/' }),
+    mention('https://a.test/pb-1', { toUrl: 'https://bob.test/pb' }),
+    mention('https://a.test/other', { toUrl: 'https://bob.test/' })
+  ])
+  t.is(rows(db, 'SELECT * FROM mentions').length, 3) // footer embeds still match per url
+  t.deepEqual(await getSourceMentionCounts(db), { 'bob.test': 2 })
+
+  const xml = await (await handleMentionsFeed(db, 'bob.test', 'https://discover.brine.dev/api/mentions/bob.test.xml')).text()
+  t.is(xml.match(/<item>/g).length, 2)
+  t.ok(xml.includes('mentioned <a href="https://bob.test/pb">')) // the specific page wins over /
 })

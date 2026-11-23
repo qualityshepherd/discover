@@ -78,9 +78,10 @@ export const saveMentions = async (db, domain, mentions) => {
   if (stmts.length) await db.batch(stmts)
 }
 
-// { [domain]: count } — live from mentions table, never stale
+// { [domain]: count } — live from mentions table, never stale.
+// Counts posts, not rows: one post linking your homepage and a post is one mention.
 export const getSourceMentionCounts = async (db) => {
-  const rows = await db.prepare('SELECT to_domain, COUNT(*) AS cnt FROM mentions GROUP BY to_domain').all()
+  const rows = await db.prepare('SELECT to_domain, COUNT(DISTINCT from_post) AS cnt FROM mentions GROUP BY to_domain').all()
   const counts = {}
   for (const row of rows.results) {
     counts[row.to_domain] = row.cnt // eslint-disable-line camelcase

@@ -234,6 +234,22 @@ test('buildLinkGraph: a domain with only historical mentions still heals', async
   t.is(rows(db, "SELECT * FROM mentions WHERE to_domain='bob.test'").length, 1)
 })
 
+test('buildLinkGraph: query count stays flat as mentioned domains grow', async t => {
+  const db = makeDb()
+  const ins = db.sqlite.prepare("INSERT INTO mentions (from_source, from_post, from_title, from_date, to_domain, to_url, found_at) VALUES ('https://a.test/feed', ?, 'T', '2026-05-11', ?, ?, '2026-05-11 00:00:00')")
+  for (let d = 0; d < 300; d++) {
+    for (let p = 0; p < 2; p++) ins.run(`https://a.test/p${d}-${p}`, `d${d}.test`, `https://d${d}.test/x`)
+  }
+  db.queries = 0
+  db.changes = 0
+  await buildLinkGraph(db, ['https://a.test/feed', 'https://fresh.test/feed'], new Map([['https://fresh.test/feed', {
+    posts: [{ url: 'https://fresh.test/p1', title: 'F', date: '2026-11-01', content: '<a href="https://a.test/z">z</a>' }]
+  }]]))
+  t.ok(db.queries <= 5, `${db.queries} queries`) // was ~2 per domain: 600+
+  t.is(rows(db, "SELECT * FROM mentions WHERE to_domain LIKE 'd%.test'").length, 600) // paged past 500, nothing lost
+  t.is(db.changes, 1) // just the one new mention of a.test
+})
+
 const feed = (extra = {}) => ({
   id: 'f1',
   title: 'Cool',

@@ -1,9 +1,13 @@
 // Mentions: a curated blog's post linking another curated blog. Harvested
 // from the posts the cron already fetched, so it costs no extra requests.
 import { makeId } from './db-sources.js'
-import { getMentions, saveMentions } from './db-mentions.js'
+import { getAllMentionRows, newestMentions, mentionStatements } from './db-mentions.js'
 import { urlMatchKey } from './url-normalize.js'
 import { blogDomain } from './utils.js'
+
+// a batch is one D1 query however many statements it holds; chunked so a
+// big heal never sends one giant transaction
+const BATCH_STATEMENTS = 100
 
 export const VIDEO_DOMAINS = new Set(['youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv', 'rumble.com'])
 
@@ -60,15 +64,21 @@ export const buildLinkGraph = async (db, sourceUrls, freshData) => {
   // domains whose only mentions are historical never appear in the fresh
   // harvest, but their stored rows still need the prune/dedupe pass below
   // - a heal that waits for fresh data never heals them
-  const stored = await db.prepare('SELECT DISTINCT to_domain FROM mentions').all()
-  for (const row of stored.results) {
-    if (!byTarget.has(row.to_domain)) byTarget.set(row.to_domain, [])
+  // one paged read for every domain, not a read per domain - 230 domains
+  // was ~600 D1 queries a run, creeping on the 1000-per-invocation cap
+  const storedByDomain = await getAllMentionRows(db)
+  for (const domain of storedByDomain.keys()) {
+    if (!byTarget.has(domain)) byTarget.set(domain, [])
   }
 
   if (!byTarget.size) return
 
-  await Promise.all([...byTarget.entries()].map(async ([domain, newItems]) => {
-    const existing = await getMentions(db, domain)
+  const deletes = []
+  const updates = []
+  const inserts = []
+  for (const [domain, newItems] of byTarget) {
+    const storedRows = storedByDomain.get(domain) || []
+    const existing = newestMentions(storedRows)
     // identity is normalized on purpose - a feed respelling its own urls
     // (www. appearing, trailing slash) must replace its old rows, not
     // stack next to them. bit us for real: alvinashcraft.com doubled.
@@ -99,6 +109,15 @@ export const buildLinkGraph = async (db, sourceUrls, freshData) => {
         return true
       })
       .slice(0, 100)
-    await saveMentions(db, domain, updated)
-  }))
+    const diff = mentionStatements(db, domain, storedRows, updated)
+    deletes.push(...diff.deletes)
+    updates.push(...diff.updates)
+    inserts.push(...diff.inserts)
+  }
+
+  // every delete first: UNIQUE(from_post, to_url) spans domains
+  const stmts = [...deletes, ...updates, ...inserts]
+  for (let i = 0; i < stmts.length; i += BATCH_STATEMENTS) {
+    await db.batch(stmts.slice(i, i + BATCH_STATEMENTS))
+  }
 }

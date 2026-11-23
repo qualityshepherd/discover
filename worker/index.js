@@ -1,6 +1,6 @@
 import { trackHit } from './hit.js'
 import { handleDiscover } from './discover.js'
-import { handleMentionsFeed, handleMentionsForUrl } from './mentions.js'
+import { handleMentionsFeed, handleMentionsForUrl, handleMentionsOutbound } from './mentions.js'
 import { checkDiscoverFeeds } from './cron.js'
 import { handleAuth } from './auth.js'
 import { getFeed } from './db-feeds.js'
@@ -8,7 +8,7 @@ import { xmlAttr as escHtml } from './utils.js'
 import { isEdgeCacheable, withEdgeCache } from './cache.js'
 
 // Hash of the inline theme-init <script> - identical in discover/index.html,
-// about/index.html and 404.html (test/unit/csp.test.js fails if any of them
+// about/index.html, mentions-spec/index.html and 404.html (test/unit/csp.test.js fails if any of them
 // drift from this without the hash getting updated too). It runs before
 // paint to avoid a flash of the wrong theme, which is why it's inline
 // instead of an external file like everything else.
@@ -94,6 +94,9 @@ async function route (req, env, ctx) {
   const mentionsMatch = path.match(/^\/api\/mentions\/([^/]+)\.xml$/)
   if (mentionsMatch) return handleMentionsFeed(env.DISCOVER_DB, mentionsMatch[1], req.url)
 
+  // Everything the curated blogs linked lately - public JSON for other indexes
+  if (path === '/api/mentions.json') return handleMentionsOutbound(env.DISCOVER_DB)
+
   // Mentions of one page — public JSON for the footer embed
   if (path === '/api/mentions/for') return handleMentionsForUrl(env.DISCOVER_DB, req.url)
 
@@ -110,7 +113,7 @@ async function route (req, env, ctx) {
     const rows = await env.DISCOVER_DB.prepare('SELECT id, slug FROM feeds').all()
     const base = `https://${env.DOMAIN_NAME}`
     const locs = rows.results.map(r => `  <url><loc>${base}/discover/${r.slug || r.id}</loc></url>`).join('\n')
-    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>${base}/</loc></url>\n  <url><loc>${base}/about</loc></url>\n${locs}\n</urlset>`
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>${base}/</loc></url>\n  <url><loc>${base}/about</loc></url>\n  <url><loc>${base}/mentions-spec</loc></url>\n${locs}\n</urlset>`
     return new Response(xml, { headers: { 'Content-Type': 'application/xml;charset=utf-8' } })
   }
 
@@ -149,6 +152,7 @@ async function route (req, env, ctx) {
 
   // About UI
   if (path === '/about') return withSec(env.ASSETS.fetch(new Request(new URL('/about/index.html', req.url))))
+  if (path === '/mentions-spec') return withSec(env.ASSETS.fetch(new Request(new URL('/mentions-spec/index.html', req.url))))
 
   // Admin UI
   if (path === '/admin' || (path.startsWith('/admin/') && !path.includes('.'))) {

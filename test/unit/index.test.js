@@ -18,7 +18,7 @@ test('isSpaRoute: does not swallow /discover/:id - that has its own dedicated bl
 })
 
 test('isSpaRoute: does not match unrelated pages', t => {
-  for (const path of ['/about', '/admin', '/sitemap.xml', '/api/discover', '/api/discover/new']) {
+  for (const path of ['/about', '/mentions-spec', '/admin', '/sitemap.xml', '/api/discover', '/api/discover/new']) {
     t.falsy(isSpaRoute(path), path)
   }
 })

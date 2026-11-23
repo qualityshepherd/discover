@@ -40,5 +40,8 @@ const suggest = async () => {
     suggestBtn.textContent = 'suggest'
   }
 }
-suggestBtn.addEventListener('click', suggest)
-suggestUrl.addEventListener('keydown', e => { if (e.key === 'Enter') suggest() })
+// the spec page shares this file but has no suggest box
+if (suggestBtn) {
+  suggestBtn.addEventListener('click', suggest)
+  suggestUrl.addEventListener('keydown', e => { if (e.key === 'Enter') suggest() })
+}

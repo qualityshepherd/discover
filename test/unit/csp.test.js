@@ -9,7 +9,7 @@ import { THEME_INIT_SCRIPT_HASH } from '../../worker/index.js'
 // character - without updating THEME_INIT_SCRIPT_HASH, the real CSP
 // silently starts blocking it and every page flashes the wrong theme on
 // load. This fails loudly instead.
-const PAGES = ['assets/404.html', 'assets/about/index.html', 'assets/discover/index.html']
+const PAGES = ['assets/404.html', 'assets/about/index.html', 'assets/discover/index.html', 'assets/mentions-spec/index.html']
 
 const extractThemeScript = (path) => {
   const html = readFileSync(path, 'utf8')

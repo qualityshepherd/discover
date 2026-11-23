@@ -1,7 +1,7 @@
 // Public mentions endpoints: an RSS feed per blog, and the JSON the footer
 // embed asks for. Both read the same mentions table.
 import { json, xmlAttr } from './utils.js'
-import { getMentions, getMentionsForUrl } from './db-mentions.js'
+import { getMentions, getMentionsForUrl, getRecentMentionLinks } from './db-mentions.js'
 import { EDGE_CACHE_CONTROL } from './cache.js'
 import { urlMatchKey } from './url-normalize.js'
 
@@ -13,6 +13,43 @@ export const handleMentionsForUrl = async (db, reqUrl) => {
   const pageUrl = new URL(reqUrl).searchParams.get('url') || ''
   const mentions = await getMentionsForUrl(db, pageUrl)
   const res = json({ mentions })
+  res.headers.set('Access-Control-Allow-Origin', '*')
+  res.headers.set('Cache-Control', EDGE_CACHE_CONTROL)
+  return res
+}
+
+// GET /api/mentions.json - what discover's curated blogs linked lately, for
+// other indexes (bear, blogroll) to use. First-hand only: every row came
+// from a feed curated here. Links, not words - no post bodies.
+export const OUTBOUND_DAYS = 30
+export const OUTBOUND_SPEC = 'https://discover.brine.dev/mentions-spec'
+
+// some feeds double-escape, so hrefs got stored as &amp;amp;
+const decodeAmp = (u) => {
+  let s = u
+  for (let i = 0; i < 5 && s.includes('&amp;'); i++) s = s.replace(/&amp;/g, '&')
+  return s
+}
+
+const isoDate = (d) => {
+  const t = Date.parse(d || '')
+  return Number.isNaN(t) ? null : new Date(t).toISOString()
+}
+
+export const handleMentionsOutbound = async (db, now = Date.now()) => {
+  const rows = await getRecentMentionLinks(db, now - OUTBOUND_DAYS * 86400000)
+  const byPost = new Map()
+  for (const r of rows) {
+    const link = decodeAmp(r.to_url || '')
+    if (!/^https?:\/\//i.test(link)) continue
+    let p = byPost.get(r.from_post)
+    if (!p) {
+      p = { post: r.from_post, title: r.from_title || '', date: isoDate(r.from_date), links: [] }
+      byPost.set(r.from_post, p)
+    }
+    if (!p.links.includes(link)) p.links.push(link)
+  }
+  const res = json({ version: 1, updated: new Date(now).toISOString(), days: OUTBOUND_DAYS, spec: OUTBOUND_SPEC, mentions: [...byPost.values()] })
   res.headers.set('Access-Control-Allow-Origin', '*')
   res.headers.set('Cache-Control', EDGE_CACHE_CONTROL)
   return res

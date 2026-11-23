@@ -38,6 +38,16 @@ export const getAllMentionRows = async (db, pageSize = 500) => {
   return byDomain
 }
 
+// Every link harvested since `sinceMs`, newest first - the outbound file.
+// found_at is sqlite's datetime('now') text, so compare in that shape.
+export const getRecentMentionLinks = async (db, sinceMs, limit = 2000) => {
+  const since = new Date(sinceMs).toISOString().replace('T', ' ').slice(0, 19)
+  const { results } = await db.prepare(
+    'SELECT from_post, from_title, from_date, to_url, found_at FROM mentions WHERE found_at >= ? ORDER BY found_at DESC LIMIT ?'
+  ).bind(since, limit).all()
+  return results
+}
+
 // stored rows as the newest-100 mentions getMentions would return
 export const newestMentions = (storedRows) => storedRows.slice(0, 100).map(toMention)
 

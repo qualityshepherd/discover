@@ -55,7 +55,9 @@ export const normalizeTag = (raw) => raw.toLowerCase().replace(/[^a-z0-9]/g, '')
 export const extractPostTags = (categoryXml, content) => {
   const tags = new Set()
   for (const c of extractCategories(categoryXml)) {
-    const n = normalizeTag(c.trim())
+    // blosxom-style path categories (/movies/commentary/horror) tag by the last part
+    const raw = c.trim()
+    const n = normalizeTag(raw.startsWith('/') ? raw.split('/').filter(Boolean).pop() || '' : raw)
     if (n.length >= 2 && !HEX_COLOR.test(n) && !HEX_ENTITY.test(n) && !FOOTNOTE.test(n)) tags.add(n)
   }
   if (content) {

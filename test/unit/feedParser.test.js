@@ -205,3 +205,11 @@ test('parseFeed: atom entry with xml:lang, rss item with rdf:about', t => {
   const rss = '<rss><channel><item rdf:about="https://r.test/1"><title>Rdf</title><link>https://r.test/1</link></item><items><x/></items></channel></rss>'
   t.deepEqual(parseFeed(rss, { url: 'https://r.test/rss' }).map(p => p.title), ['Rdf'])
 })
+
+test('FeedParser: path-style categories tag by their last part; slashes mid-name stay whole', t => {
+  const xml = `<rss version="2.0"><channel><title>Mile</title>
+  <item><title>A</title><link>https://m.test/a</link><category>/movies/commentary/horror</category><category>/tech/coding/</category><category>AI/ML</category><description>x</description></item>
+  </channel></rss>`
+  const [post] = parseFeed(xml, { url: 'https://m.test/feed' })
+  t.deepEqual(post.tags, ['horror', 'coding', 'aiml'])
+})

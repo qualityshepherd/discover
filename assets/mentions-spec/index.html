@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>mentions spec · discover</title>
+  <meta name="description" content="A tiny spec for sharing blog mentions between indexes: one JSON file, first-hand links only, and every receiver verifies.">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="discover">
+  <meta property="og:title" content="mentions spec · discover">
+  <meta property="og:description" content="A tiny spec for sharing blog mentions between indexes: one JSON file, first-hand links only, and every receiver verifies.">
+  <meta property="og:url" content="https://discover.brine.dev/mentions-spec">
+  <meta property="og:image" content="https://discover.brine.dev/images/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://discover.brine.dev/images/og.png">
+  <link rel="canonical" href="https://discover.brine.dev/mentions-spec">
+  <link rel="preload" href="/fonts/Oswald-Regular.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="preload" href="/fonts/Inter-Regular.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/discover.css">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.png" type="image/png">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#232323">
+  <script>document.documentElement.dataset.theme = localStorage.getItem('discover_theme') || 'dark'; if (localStorage.getItem('discover_token')) document.addEventListener('DOMContentLoaded', () => { const a = document.getElementById('nav-admin'); if (a) a.classList.remove('hidden') })</script>
+</head>
+<body>
+<div id="app">
+  <header>
+    <a href="/">
+      <svg class="site-logo" aria-label="discover" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 465 100">
+        <circle cx="50" cy="50" r="41" fill="none" stroke="currentColor" stroke-width="2" opacity="0.18"/>
+        <polygon points="50,7 55.5,49 50,55 44.5,49" fill="currentColor"/>
+        <polygon points="50,93 44.5,51 50,45 55.5,51" fill="currentColor" opacity="0.25"/>
+        <circle cx="50" cy="50" r="5.5" fill="currentColor" opacity="0.5"/>
+        <text x="112" y="88" font-family="header, Oswald, sans-serif" font-weight="600" font-size="96" fill="currentColor">discover</text>
+      </svg>
+    </a>
+    <nav>
+      <a href="/filters">filters</a>
+      <a href="/random">random</a>
+      <a href="/about">about</a>
+      <a id="nav-admin" href="/admin" class="nav-icon hidden" title="admin" aria-label="admin"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.57 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg></a>
+      <button id="btn-theme" title="Toggle light/dark mode" aria-label="Toggle theme"></button>
+    </nav>
+  </header>
+
+  <main class="container">
+    <div class="feed-posts">
+      <h1>Mentions, shared</h1>
+      <p>A tiny spec for blog indexes to share who linked to whom. One JSON file. No accounts, no pings, no endpoints to run. Version 1.</p>
+      <p>Discover publishes one at <a href="/api/mentions.json"><code>/api/mentions.json</code></a>. Anyone can read it. Anyone can publish their own.</p>
+
+      <h2>The file</h2>
+<pre><code>{
+  "version": 1,
+  "updated": "2026-11-23T19:51:17.016Z",
+  "days": 30,
+  "spec": "https://discover.brine.dev/mentions-spec",
+  "mentions": [
+    {
+      "post": "https://brine.dev/posts/blogroll-manuelmorealecom",
+      "title": "Blogroll: manuelmoreale.com",
+      "date": "2026-11-23T16:29:44.000Z",
+      "links": ["https://manuelmoreale.com"]
+    }
+  ]
+}</code></pre>
+      <table>
+        <tr><th>field</th><th>what it is</th></tr>
+        <tr><td><code>version</code></td><td>Always <code>1</code> for now. Bumped only for breaking changes.</td></tr>
+        <tr><td><code>updated</code></td><td>When the file was built, like <code>2026-11-23T19:51:17Z</code>.</td></tr>
+        <tr><td><code>days</code></td><td>How far back the file goes. 30 is a good default.</td></tr>
+        <tr><td><code>spec</code></td><td>Optional. A link to this page.</td></tr>
+        <tr><td><code>post</code></td><td>The post that did the linking.</td></tr>
+        <tr><td><code>title</code></td><td>Its title. Can be empty.</td></tr>
+        <tr><td><code>date</code></td><td>When it was published, like <code>2026-11-20T18:16:29Z</code>, or <code>null</code> if unknown. Never a guess.</td></tr>
+        <tr><td><code>links</code></td><td>Every link in that post to another site. Full URLs.</td></tr>
+      </table>
+      <p>Serve it with <code>Access-Control-Allow-Origin: *</code> so browsers can read it too. Caching is fine. Ignore fields you don't know; new ones may appear without a version bump.</p>
+
+      <h2>Two rules</h2>
+      <p><b>1. First-hand only.</b> List links from posts you host or fetch yourself. Never republish mentions you read in someone else's file. Every claim stays one hop from a real post, so junk can't be laundered through a chain of peers.</p>
+      <p><b>2. The receiver verifies.</b> A file is a claim about where to look, not proof. Before showing a mention, fetch the post and check the link is really there. A peer that lies just produces claims that fail.</p>
+
+      <h2>Publishing: the easy half</h2>
+      <p>If you host or index blog posts, you already have this data. For each post from the last <code>days</code>, collect the links that point to other sites. Write the file. Serve it. That's the whole job. Publishing asks nothing of anyone, and trusts no one.</p>
+
+      <h2>Reading other files</h2>
+      <ol>
+        <li>Pick whose files you read. That's your call, not theirs.</li>
+        <li>Keep only links to blogs you care about. Drop the rest.</li>
+        <li>Verify each one (rule 2).</li>
+        <li>Remember where each mention came from, so you can drop a peer later and its mentions with it.</li>
+        <li>Show a title and a link back. Don't copy their words; the post belongs to its author.</li>
+      </ol>
+
+      <h3>Trust is yours</h3>
+      <p>Verifying proves a link exists. It doesn't prove the blog is worth hearing from. That part is curation, and only you can decide how much of someone else's you'll take. A simple way to think about it, per peer:</p>
+      <ul>
+        <li><b>auto</b>: verified mentions show up right away. For peers whose curation you'd vouch for.</li>
+        <li><b>review</b>: verified mentions wait for you to approve them. A good start for anyone new.</li>
+        <li><b>off</b>: you don't read that file at all.</li>
+      </ul>
+
+      <h2>What this isn't</h2>
+      <p>It isn't webmentions: nobody sends you anything, you go and read files you chose. It isn't comments: a mention is a post someone wrote on their own site, under their own name, and it links back instead of being copied.</p>
+
+      <p class="muted">Questions, or publishing a file of your own? <a href="mailto:ping@brine.dev">ping@brine.dev</a> · <a href="/about#mentions">discover's mentions</a></p>
+    </div>
+
+  </main>
+</div>
+<script type="module" src="/about/about.js"></script>
+</body>
+</html>

@@ -300,4 +300,6 @@ test('mention count and feed: one post linking two urls counts once', async t =>
   const xml = await (await handleMentionsFeed(db, 'bob.test', 'https://discover.brine.dev/api/mentions/bob.test.xml')).text()
   t.is(xml.match(/<item>/g).length, 2)
   t.ok(xml.includes('mentioned <a href="https://bob.test/pb">')) // the specific page wins over /
+  t.ok(xml.includes('<a href="https://a.test">a.test</a> mentioned')) // their site, not their feed xml
+  t.ok(!xml.includes('href="https://a.test/feed"'))
 })

@@ -43,8 +43,11 @@ export const handleMentionsFeed = async (db, sourceId, reqUrl) => {
   const base = new URL(reqUrl).origin
 
   const rssItems = items.map((m, i) => {
-    const host = xmlAttr((() => { try { return new URL(m.fromSource).hostname } catch { return m.fromSource } })())
-    const who = `<a href="${m.fromSource}">${host}</a> mentioned <a href="${m.toUrl}">${xmlAttr(domain)}</a>`
+    // fromSource is their feed url; link their site, not raw xml
+    const src = (() => { try { return new URL(m.fromSource) } catch { return null } })()
+    const host = xmlAttr(src ? src.hostname : m.fromSource)
+    const site = src ? src.origin : m.fromSource
+    const who = `<a href="${site}">${host}</a> mentioned <a href="${m.toUrl}">${xmlAttr(domain)}</a>`
     const body = i < MENTIONS_FEED_FULL
       ? `<p>↩ ${who} in this post:</p>${m.fromContent || ''}`
       : `<p>↩ ${who}. <a href="${m.fromPost}">Read it on ${host}</a></p>`

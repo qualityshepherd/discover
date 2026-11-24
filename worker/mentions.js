@@ -1,6 +1,7 @@
 // Public mentions endpoints: an RSS feed per blog, and the JSON the footer
 // embed asks for. Both read the same mentions table.
-import { json, xmlAttr } from './utils.js'
+import { json, xmlAttr, blogDomain } from './utils.js'
+import { makeId, getAllSourceUrls, getSourceData } from './db-sources.js'
 import { getMentions, getMentionsForUrl, getRecentMentionLinks } from './db-mentions.js'
 import { EDGE_CACHE_CONTROL } from './cache.js'
 import { urlMatchKey } from './url-normalize.js'
@@ -73,8 +74,20 @@ export const onePerPost = (mentions) => {
   return [...byPost.values()]
 }
 
-// GET /api/mentions/:sourceId.xml
+// Feeds used to be /api/mentions/<makeId(feedUrl)>.xml. Readers still poll
+// those, and a domain lookup on an id is a valid empty feed forever.
+// A domain always has a dot, an id never does.
+const legacyDomain = async (db, id) => {
+  const url = (await getAllSourceUrls(db)).find(u => makeId(u) === id)
+  return url ? blogDomain(url, await getSourceData(db, url)) : ''
+}
+
+// GET /api/mentions/:domain.xml
 export const handleMentionsFeed = async (db, sourceId, reqUrl) => {
+  if (!sourceId.includes('.')) {
+    const domain = await legacyDomain(db, sourceId)
+    if (domain) return Response.redirect(new URL(`/api/mentions/${domain}.xml`, reqUrl).href, 301)
+  }
   const items = onePerPost(await getMentions(db, sourceId))
   const domain = sourceId
   const base = new URL(reqUrl).origin

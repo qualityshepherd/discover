@@ -36,7 +36,9 @@ test('sanitizeContent: keeps safe <a> tags with target and rel', t => {
   const result = sanitizeContent('<a href="https://example.com">link</a>')
   t.ok(result.includes('href="https://example.com"'))
   t.ok(result.includes('target="_blank"'))
-  t.ok(result.includes('rel="noopener noreferrer"'))
+  // authors should see discover in their referrers
+  t.ok(result.includes('rel="noopener"'))
+  t.falsy(result.includes('noreferrer'))
 })
 
 test('sanitizeContent: strips javascript: links but keeps inner text', t => {

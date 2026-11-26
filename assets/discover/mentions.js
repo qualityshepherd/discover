@@ -13,7 +13,7 @@ export const injectMentionsLinks = (container, mentionCounts = {}) => {
     a.title = 'Subscribe to mentions of this source'
     a.textContent = count ? `↩ ${count}` : '↩ mentions'
     a.target = '_blank'
-    a.rel = 'noopener noreferrer'
+    a.rel = 'noopener'
     meta.appendChild(a)
   })
 }

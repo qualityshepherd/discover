@@ -45,7 +45,7 @@ export const feedsItemTemplate = (item) => {
     <div class="feed-meta">
       ${avatar ? `<img class="feed-avatar" src="${avatar}" alt="">` : ''}
       ${url
-        ? `<a class="feed-source-name" href="${url}" target="_blank" rel="noopener noreferrer" title="${sourceName}">${sourceName}</a>`
+        ? `<a class="feed-source-name" href="${url}" target="_blank" rel="noopener" title="${sourceName}">${sourceName}</a>`
         : `<span class="feed-source-name" title="${sourceName}">${sourceName}</span>`}
       <span class="date">${dateStr}</span>
     </div>

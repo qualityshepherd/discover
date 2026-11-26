@@ -45,7 +45,7 @@ const renderModalItem = (modal, item) => {
   const body = modal.querySelector('.feed-modal-body')
   const processed = item.content ? embedToLazy(processContent(item.content, item.feed?.url)) : ''
   body.innerHTML = processed ||
-    `<p class="feed-modal-no-content">no preview available — <a href="${item.url || '#'}" target="_blank" rel="noopener noreferrer">read original →</a></p>`
+    `<p class="feed-modal-no-content">no preview available — <a href="${item.url || '#'}" target="_blank" rel="noopener">read original →</a></p>`
   body.scrollTop = 0
   modal.querySelector('.feed-modal-original').href = item.url || '#'
   const subscribeEl = modal.querySelector('.feed-modal-subscribe')
@@ -111,8 +111,8 @@ export const initModal = () => {
       <div class="feed-modal-footer">
         <div class="feed-modal-source"></div>
         <div class="feed-modal-links">
-          <a class="feed-modal-original" href="#" target="_blank" rel="noopener noreferrer">↗ website</a>
-          <a class="feed-modal-subscribe hidden" href="#" target="_blank" rel="noopener noreferrer">rss</a>
+          <a class="feed-modal-original" href="#" target="_blank" rel="noopener">↗ website</a>
+          <a class="feed-modal-subscribe hidden" href="#" target="_blank" rel="noopener">rss</a>
         </div>
       </div>
     </div>

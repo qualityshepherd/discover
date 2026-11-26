@@ -53,13 +53,13 @@ const linkifyImages = (str) => {
   str = str.replace(/<a href="(https?:\/\/[^"]+)"[^>]*>\s*https?:\/\/[^\s<]+\s*<\/a>/gi, (_, href) => {
     return IMAGE_EXT.test(href)
       ? `<img src="${href}" loading="lazy" style="max-width:100%;height:auto;">`
-      : `<a href="${href}" target="_blank" rel="noopener noreferrer">${href}</a>`
+      : `<a href="${href}" target="_blank" rel="noopener">${href}</a>`
   })
   str = str.replace(/(["'>]?)(https?:\/\/[^\s<>"']+)/g, (match, prefix, url) => {
     if (prefix) return match
     return IMAGE_EXT.test(url)
       ? `<img src="${url}" loading="lazy" style="max-width:100%;height:auto;">`
-      : `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`
+      : `<a href="${url}" target="_blank" rel="noopener">${url}</a>`
   })
   return str
 }
@@ -127,7 +127,7 @@ export const sanitizeContent = (str) => {
           if (!hrefMatch) return inner
           const href = safeHref(hrefMatch[1])
           return href
-            ? `<a href="${href}" target="_blank" rel="noopener noreferrer">${inner}</a>`
+            ? `<a href="${href}" target="_blank" rel="noopener">${inner}</a>`
             : inner
         })
     )
@@ -141,7 +141,7 @@ export const linkifyHashtags = (str, feedOrigin = null) => {
     const url = feedOrigin
       ? `${feedOrigin}/tags/${tag}`
       : `/tag?t=${encodeURIComponent(tag.toLowerCase())}`
-    return `<a href="${url}" target="_blank" rel="noopener noreferrer">#${tag}</a>`
+    return `<a href="${url}" target="_blank" rel="noopener">#${tag}</a>`
   })
 }
 
@@ -149,9 +149,9 @@ export const linkifyMentions = (str, feedOrigin = null) => {
   if (!str) return ''
   return str.replace(/([=/"@]?)@([a-zA-Z0-9_]+)(?:@([a-zA-Z0-9._-]+\.[a-zA-Z]{2,}))?/g, (match, prefix, user, instance) => {
     if (prefix) return match
-    if (instance) return `<a href="https://${instance}/@${user}" target="_blank" rel="noopener noreferrer">${match}</a>`
+    if (instance) return `<a href="https://${instance}/@${user}" target="_blank" rel="noopener">${match}</a>`
     if (!feedOrigin) return match
-    return `<a href="${feedOrigin}/@${user}" target="_blank" rel="noopener noreferrer">${match}</a>`
+    return `<a href="${feedOrigin}/@${user}" target="_blank" rel="noopener">${match}</a>`
   })
 }
 

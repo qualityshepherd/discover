@@ -137,7 +137,7 @@ const splitEntries = (xml) => {
 const parseAtomEntry = (entryXml, feedMeta) => {
   const videoId = extractCdata(extractTag(entryXml, 'yt:videoId'))
   const thumbnail = videoId
-    ? `<a href="${safeUrl(`https://www.youtube.com/watch?v=${videoId}`)}" target="_blank" rel="noopener noreferrer"><img src="${safeUrl(`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`)}" loading="lazy" style="max-width:100%;display:block;margin:0 auto;"></a>`
+    ? `<a href="${safeUrl(`https://www.youtube.com/watch?v=${videoId}`)}" target="_blank" rel="noopener"><img src="${safeUrl(`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`)}" loading="lazy" style="max-width:100%;display:block;margin:0 auto;"></a>`
     : ''
   const content = extractCdata(extractTag(entryXml, 'content') || extractTag(entryXml, 'summary'))
   return {

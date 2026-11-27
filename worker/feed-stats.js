@@ -55,7 +55,23 @@ export const topTags = (posts, n = 6) => {
   return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, n).map(([t]) => t)
 }
 
-// feed: { feedUrl, posts, siteUrl, language, generator }
+// What the author's homepage says about reuse, read from html the probe
+// already fetched. Only deliberate signals: a noai tag is a choice, a
+// robots.txt AI list is often a template, "all rights reserved" is footer
+// boilerplate. A flag for you to weigh, never a machine no.
+export const consentSignals = (html) => {
+  const h = (html || '').toLowerCase()
+  const out = []
+  for (const [tag] of h.matchAll(/<meta\b[^>]*>/g)) {
+    if (/name=["'](robots|ai)["']/.test(tag) && /content=["'][^"']*\bno(image)?ai\b/.test(tag)) out.push('noai')
+    if (/name=["']tdm-reservation["']/.test(tag) && /content=["']1["']/.test(tag)) out.push('tdm-reservation')
+  }
+  if (/creativecommons\.org\/licenses\//.test(h)) out.push('cc license')
+  else if (/creativecommons\.org\/publicdomain\//.test(h)) out.push('public domain')
+  return [...new Set(out)]
+}
+
+// feed: { feedUrl, posts, siteUrl, language, generator, consent }
 // known: domains already in discover, for link-backs
 export const feedStats = (feed, domain, known = new Set()) => {
   const posts = feed?.posts || []
@@ -79,6 +95,7 @@ export const feedStats = (feed, domain, known = new Set()) => {
     language: feed?.language || null,
     generator,
     substack: /substack/i.test(generator || '') || /\.substack\.com$/.test(domain || ''),
+    consent: feed?.consent || [],
     linksBack: [...linksBack].sort()
   }
 }
@@ -105,5 +122,6 @@ export const statsLine = (s) => {
   if (s.linksBack?.length) bits.push(`links back to ${s.linksBack.length}`)
   if (s.language) bits.push(s.language)
   if (s.substack) bits.push('substack')
+  if (s.consent?.length) bits.push(s.consent.join(', '))
   return bits.join(' · ')
 }

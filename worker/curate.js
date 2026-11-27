@@ -3,7 +3,7 @@
 import { getBlocked, getDismissedDomains, getCandidates, saveCandidates, isUrlBlocked } from './db-moderation.js'
 import { getSourceDataBulk } from './db-sources.js'
 import { getCronState, setCronState } from './db-auth.js'
-import { feedStats, rejectReason } from './feed-stats.js'
+import { feedStats, rejectReason, consentSignals } from './feed-stats.js'
 import { fetchSource, discoverUA } from './fetch-source.js'
 import { VIDEO_DOMAINS } from './link-graph.js'
 import { bareHost, blogDomain } from './utils.js'
@@ -64,7 +64,8 @@ export const findFeedLink = (html, base) => {
 
 // Every answer is checked by reading it: a content-type saying "xml" isn't
 // proof (app pages and error pages say it too - play.google.com/atom.xml).
-export const probeFeedUrl = async (domain, myDomain, _fetch = fetch) => {
+// seen.html gets the homepage, so its consent signals cost no extra fetch
+export const probeFeedUrl = async (domain, myDomain, _fetch = fetch, seen = {}) => {
   const get = (url, ms) => _fetch(url, { signal: AbortSignal.timeout(ms), headers: { 'User-Agent': discoverUA(myDomain) } })
   const isFeed = async (url) => {
     try {
@@ -75,7 +76,8 @@ export const probeFeedUrl = async (domain, myDomain, _fetch = fetch) => {
   try {
     const res = await get(`https://${domain}`, 5000)
     if (res.ok) {
-      const declared = findFeedLink(await res.text(), `https://${domain}/`)
+      seen.html = await res.text()
+      const declared = findFeedLink(seen.html, `https://${domain}/`)
       if (declared && await isFeed(declared)) return declared
     }
   } catch {}
@@ -87,10 +89,11 @@ export const probeFeedUrl = async (domain, myDomain, _fetch = fetch) => {
 
 // find the feed, then read it for real so the checks have posts to look at
 export const probeCandidate = async (domain, myDomain) => {
-  const feedUrl = await probeFeedUrl(domain, myDomain)
+  const seen = {}
+  const feedUrl = await probeFeedUrl(domain, myDomain, fetch, seen)
   if (!feedUrl) return null
   const r = await fetchSource(feedUrl, 20, myDomain)
-  return { feedUrl, posts: r.posts || [], siteUrl: r.siteUrl || null, language: r.language || null, generator: r.generator || null }
+  return { feedUrl, posts: r.posts || [], siteUrl: r.siteUrl || null, language: r.language || null, generator: r.generator || null, consent: consentSignals(seen.html) }
 }
 
 const PROBE_RETRY_MS = 30 * 86400000

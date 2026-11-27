@@ -1,5 +1,5 @@
 import { unit as test } from '../testpup.js'
-import { isFullText, feedStats, rejectReason, statsLine, topTags } from '../../worker/feed-stats.js'
+import { isFullText, feedStats, rejectReason, statsLine, topTags, consentSignals } from '../../worker/feed-stats.js'
 import { DAY, goodPosts, feedOf } from '../helpers/feeds.js'
 
 // isFullText - discover's full-text rule
@@ -96,4 +96,34 @@ test('topTags: most used first, filler dropped, a post counts a tag once', t => 
 test('feedStats: carries the top tags so a candidate row can show them', t => {
   const posts = goodPosts(3).map(p => ({ ...p, tags: ['music', 'folk'] }))
   t.deepEqual(feedStats(feedOf(posts), 'x.com').topTags, ['folk', 'music'])
+})
+
+// consentSignals - what the homepage says about reuse
+
+test('consentSignals: a noai robots tag, in either attribute order', t => {
+  t.deepEqual(consentSignals('<meta name="robots" content="noai, noimageai">'), ['noai'])
+  t.deepEqual(consentSignals('<meta content="index, noai" name="robots">'), ['noai'])
+})
+
+test('consentSignals: tdm-reservation set to 1', t => {
+  t.deepEqual(consentSignals('<meta name="tdm-reservation" content="1">'), ['tdm-reservation'])
+  t.deepEqual(consentSignals('<meta name="tdm-reservation" content="0">'), [])
+})
+
+test('consentSignals: creative commons and public domain', t => {
+  t.deepEqual(consentSignals('<a rel="license" href="https://creativecommons.org/licenses/by-nc/4.0/">'), ['cc license'])
+  t.deepEqual(consentSignals('<a href="https://creativecommons.org/publicdomain/zero/1.0/">'), ['public domain'])
+})
+
+test('consentSignals: boilerplate and prose are not signals', t => {
+  t.deepEqual(consentSignals('<footer>© 2026 All rights reserved</footer><p>I wrote about noai tags today</p>'), [])
+  t.deepEqual(consentSignals(''), [])
+  t.deepEqual(consentSignals(null), [])
+})
+
+test('feedStats and statsLine: consent rides along, never rejects', t => {
+  const s = feedStats(feedOf(goodPosts(), { consent: ['noai', 'cc license'] }), 'x.com')
+  t.deepEqual(s.consent, ['noai', 'cc license'])
+  t.ok(statsLine(s).endsWith('noai, cc license'))
+  t.is(rejectReason(s), null)
 })

@@ -402,3 +402,13 @@ test('buildCurateCandidates: nothing is capped away', async t => {
   await buildCurateCandidates(db, [], freshData, noProbe, 'x', Math.random, { probes: 160 })
   t.is((await getCandidates(db)).length, 160)
 })
+
+test('probeFeedUrl: hands back the homepage it already read', async t => {
+  const f = fakeFetch({
+    'https://blog.com': { body: '<meta name="robots" content="noai"><link href="/feed.xml" type="application/rss+xml">' },
+    'https://blog.com/feed.xml': { body: '<rss version="2.0"><channel>', type: 'application/rss+xml' }
+  })
+  const seen = {}
+  t.is(await probeFeedUrl('blog.com', 'x', f, seen), 'https://blog.com/feed.xml')
+  t.ok(seen.html.includes('noai'))
+})

@@ -391,3 +391,10 @@
 .feed-modal-no-content a {
   color: var(--color-accent);
 }
+
+/* about: flex gap spaces it, so p margins would double up */
+.about p,
+.about pre { margin: 0; }
+.about h2 { margin: var(--space-5) 0 0; }
+.about h3 { margin: var(--space-4) 0 0; font-size: var(--text-lg); }
+.about .feed-add-status { margin-bottom: 0; }

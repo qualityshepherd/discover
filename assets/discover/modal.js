@@ -43,7 +43,7 @@ const feedDomain = (url) => { try { return new URL(url).hostname } catch { retur
 const renderModalItem = (modal, item) => {
   modal.querySelector('.feed-modal-title').textContent = item.title || ''
   const body = modal.querySelector('.feed-modal-body')
-  const processed = item.content ? embedToLazy(processContent(item.content, item.feed?.url)) : ''
+  const processed = item.content ? embedToLazy(processContent(item.content, item.feed?.url, item.url)) : ''
   body.innerHTML = processed ||
     `<p class="feed-modal-no-content">no preview available — <a href="${item.url || '#'}" target="_blank" rel="noopener">read original →</a></p>`
   body.scrollTop = 0

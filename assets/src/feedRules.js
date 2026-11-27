@@ -29,10 +29,13 @@ export const stripHtml = (str) => {
     .trim()
 }
 
-const safeHref = (href) => {
+// relative links resolve against the post, so /tag?t=x points at their site
+const safeHref = (href, base) => {
   try {
-    const { protocol } = new URL(href)
-    return protocol === 'https:' || protocol === 'http:' ? href : null
+    const url = new URL(href, base || undefined)
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+    // absolute hrefs pass through as written
+    return /^https?:/i.test(href) ? href : url.href
   } catch { return null }
 }
 
@@ -96,7 +99,7 @@ export const embedToLazy = (html) => {
   })
 }
 
-export const sanitizeContent = (str) => {
+export const sanitizeContent = (str, base = null) => {
   if (!str) return ''
   return stripSubstackFooter(linkifyImages(
     stripRedditFooter(
@@ -125,7 +128,7 @@ export const sanitizeContent = (str) => {
         .replace(/<a([^>]*)>([\s\S]*?)<\/a>/gi, (_, attrs, inner) => {
           const hrefMatch = attrs.match(/href=["']([^"']*)["']/i)
           if (!hrefMatch) return inner
-          const href = safeHref(hrefMatch[1])
+          const href = safeHref(hrefMatch[1], base)
           return href
             ? `<a href="${href}" target="_blank" rel="noopener">${inner}</a>`
             : inner
@@ -134,15 +137,22 @@ export const sanitizeContent = (str) => {
   ))
 }
 
+// only bare text: tags, existing links and code pass through untouched
+const SKIP_HASHTAGS = /(<a\b[\s\S]*?<\/a>|<(pre|code)\b[\s\S]*?<\/\2>|<[^>]*>)/i
+
 export const linkifyHashtags = (str, feedOrigin = null) => {
   if (!str) return ''
-  return str.replace(/([="/>@#a-zA-Z0-9]?)#([a-zA-Z0-9_]+)/g, (match, prefix, tag) => {
-    if (prefix) return match
-    const url = feedOrigin
-      ? `${feedOrigin}/tags/${tag}`
-      : `/tag?t=${encodeURIComponent(tag.toLowerCase())}`
-    return `<a href="${url}" target="_blank" rel="noopener">#${tag}</a>`
-  })
+  return str.split(SKIP_HASHTAGS)
+    .map((part, i) => i % 3 === 0
+      ? (part || '').replace(/([="/@#&a-zA-Z0-9]?)#([a-zA-Z0-9_]+)/g, (match, prefix, tag) => {
+          if (prefix || !/[a-z]/i.test(tag)) return match
+          const url = feedOrigin
+            ? `${feedOrigin}/tags/${tag}`
+            : `/tag?t=${encodeURIComponent(tag.toLowerCase())}`
+          return `<a href="${url}" target="_blank" rel="noopener">#${tag}</a>`
+        })
+      : i % 3 === 1 ? part : '')
+    .join('')
 }
 
 export const linkifyMentions = (str, feedOrigin = null) => {
@@ -155,12 +165,12 @@ export const linkifyMentions = (str, feedOrigin = null) => {
   })
 }
 
-export const processContent = (str, feedUrl = null) => {
+export const processContent = (str, feedUrl = null, postUrl = null) => {
   if (!str) return ''
   const origin = feedUrl
     ? (() => { try { return new URL(feedUrl).origin } catch { return null } })()
     : null
-  return linkifyMentions(linkifyHashtags(sanitizeContent(str), origin), origin)
+  return linkifyMentions(linkifyHashtags(sanitizeContent(str, postUrl || feedUrl), origin), origin)
 }
 
 export const blurb = (html, maxLen = 420) => {

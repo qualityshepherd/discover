@@ -295,3 +295,40 @@ test('extractFirstImage: skips relative src images', t => {
   const html = '<img src="/local/image.jpg"><img src="https://example.com/remote.jpg">'
   t.is(extractFirstImage(html), 'https://example.com/remote.jpg')
 })
+
+// relative links and hashtags (brine.dev sends <a href="/tag?t=x" class="tag">)
+
+test('sanitizeContent: resolves relative links against the post url', t => {
+  const result = sanitizeContent('<p><a href="/tag?t=ack">#ack</a></p>', 'https://brine.dev/posts/the-void')
+  t.ok(result.includes('href="https://brine.dev/tag?t=ack"'))
+})
+
+test('sanitizeContent: drops relative links when there is no base', t => {
+  const result = sanitizeContent('<a href="/tag?t=ack">#ack</a>')
+  t.falsy(result.includes('<a'))
+  t.ok(result.includes('#ack'))
+})
+
+test('sanitizeContent: relative javascript: still blocked with a base', t => {
+  const result = sanitizeContent('<a href="javascript:alert(1)">x</a>', 'https://brine.dev/')
+  t.falsy(result.includes('javascript:'))
+})
+
+test('processContent: site tag links survive, both of them', t => {
+  const html = '<p><a href="/tag?t=ping" class="tag">#ping</a> <a href="/tag?t=ack" class="tag">#ack</a></p>'
+  const result = processContent(html, 'https://brine.dev/feed.xml', 'https://brine.dev/posts/the-void')
+  t.ok(result.includes('href="https://brine.dev/tag?t=ping"'))
+  t.ok(result.includes('href="https://brine.dev/tag?t=ack"'))
+  t.falsy(result.includes('/tags/'))
+  t.is((result.match(/<a/g) || []).length, 2)
+})
+
+test('linkifyHashtags: hashtag at the start of a paragraph', t => {
+  const result = linkifyHashtags('<p>#fkr rules</p>', 'https://mastodon.social')
+  t.ok(result.includes('href="https://mastodon.social/tags/fkr"'))
+})
+
+test('linkifyHashtags: leaves code, entities and numbers alone', t => {
+  const result = linkifyHashtags('<code>#fff</code> &#39; issue #42')
+  t.falsy(result.includes('<a'))
+})

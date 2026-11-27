@@ -124,7 +124,12 @@ export const sanitizeContent = (str, base = null) => {
         .replace(/\s+on\w+='[^']*'/gi, '')
         .replace(/\s+srcset=(["'])[\s\S]*?\1/gi, '')
         .replace(/\s+sizes=(["'])[\s\S]*?\1/gi, '')
-        .replace(/<img[^>]*src="(?!https?:\/\/)[^"]*"[^>]*\/?>/gi, '')
+        // relative src resolves like links; data:, javascript: and no src are dropped
+        .replace(/<img\b([^>]*)>/gi, (match, attrs) => {
+          const m = attrs.match(/(?:^|\s)src=(["'])([^"']*)\1/i)
+          const src = m && safeHref(m[2], base)
+          return src ? match.replace(m[0], ` src="${src}"`) : ''
+        })
         .replace(/<a([^>]*)>([\s\S]*?)<\/a>/gi, (_, attrs, inner) => {
           const hrefMatch = attrs.match(/href=["']([^"']*)["']/i)
           if (!hrefMatch) return inner
@@ -181,9 +186,13 @@ export const blurb = (html, maxLen = 420) => {
   return last > maxLen * 0.5 ? text.slice(0, last + 1) : cut.trimEnd() + '…'
 }
 
-export const extractFirstImage = (html) => {
+export const extractFirstImage = (html, base = null) => {
   if (!html) return ''
   const decoded = decodeEntities(html)
-  const m = decoded.match(/<img[^>]+src=["'](https?:\/\/[^"']+)["']/i)
-  return m ? m[1] : ''
+  // first image that resolves; relative ones are skipped when there's no base
+  for (const m of decoded.matchAll(/<img\b[^>]*?\ssrc=["']([^"']+)["']/gi)) {
+    const src = safeHref(m[1], base)
+    if (src) return src
+  }
+  return ''
 }

@@ -332,3 +332,29 @@ test('linkifyHashtags: leaves code, entities and numbers alone', t => {
   const result = linkifyHashtags('<code>#fff</code> &#39; issue #42')
   t.falsy(result.includes('<a'))
 })
+
+test('sanitizeContent: resolves relative image src against the post url', t => {
+  const result = sanitizeContent('<img src="/images/brine.jpg" alt="b">', 'https://brine.dev/posts/the-void')
+  t.ok(result.includes('src="https://brine.dev/images/brine.jpg"'))
+  t.ok(result.includes('alt="b"'))
+})
+
+test('sanitizeContent: resolves single-quoted and path-relative image src', t => {
+  const result = sanitizeContent("<img src='cat.png'>", 'https://example.com/blog/post/')
+  t.ok(result.includes('src="https://example.com/blog/post/cat.png"'))
+})
+
+test('sanitizeContent: drops relative images with no base, and data: images', t => {
+  t.falsy(sanitizeContent('<img src="/x.jpg">').includes('<img'))
+  t.falsy(sanitizeContent('<img src="data:image/png;base64,AAAA">', 'https://a.com/').includes('<img'))
+})
+
+test('sanitizeContent: lazy data-src is not mistaken for src', t => {
+  const result = sanitizeContent('<img data-src="/lazy.jpg" src="https://a.com/real.jpg">', 'https://a.com/')
+  t.ok(result.includes('src="https://a.com/real.jpg"'))
+})
+
+test('extractFirstImage: resolves relative src against the post url', t => {
+  t.is(extractFirstImage('<p><img src="/images/brine.jpg"></p>', 'https://brine.dev/posts/x'), 'https://brine.dev/images/brine.jpg')
+  t.is(extractFirstImage('<img src="/images/brine.jpg">'), '')
+})

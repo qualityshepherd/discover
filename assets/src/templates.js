@@ -29,7 +29,7 @@ export const feedsItemTemplate = (item) => {
   const domain = feedDomain(url)
   const avatar = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=16` : ''
   const dateStr = formatDate(item.date)
-  const thumb = extractFirstImage(item.content || '') || thumbPlaceholder(item.feed?.title || domain)
+  const thumb = extractFirstImage(item.content || '', item.url) || thumbPlaceholder(item.feed?.title || domain)
   const contentForBlurb = (item.content || '').replace(/<style[\s\S]*?<\/style>/gi, '')
   const text = blurb(contentForBlurb)
 

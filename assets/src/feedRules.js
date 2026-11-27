@@ -145,6 +145,25 @@ export const sanitizeContent = (str, base = null) => {
 // only bare text: tags, existing links and code pass through untouched
 const SKIP_HASHTAGS = /(<a\b[\s\S]*?<\/a>|<(pre|code)\b[\s\S]*?<\/\2>|<[^>]*>)/i
 
+// rss <author> is "email (Name)"; show the name, never the address
+const EMAIL = /\S+@\S+\.\S+/
+export const authorName = (author) => {
+  const a = (author || '').trim()
+  const paren = a.match(/^\S+@\S+\s*\((.+)\)$/)
+  if (paren) return paren[1].trim()
+  return EMAIL.test(a) ? '' : a
+}
+
+// "author · feed", once when they're the same name. FossilHuntress and
+// FOSSIL HUNTRESS count as the same
+const bare = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
+export const sourceLabel = (author, feedTitle) => {
+  const name = authorName(author)
+  if (!name) return feedTitle || ''
+  if (!feedTitle || bare(name) === bare(feedTitle)) return name
+  return `${name} · ${feedTitle}`
+}
+
 export const linkifyHashtags = (str, feedOrigin = null) => {
   if (!str) return ''
   return str.split(SKIP_HASHTAGS)

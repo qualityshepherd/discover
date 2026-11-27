@@ -1,5 +1,5 @@
 import { unit as test } from '../testpup.js'
-import { sanitizeContent, stripHtml, linkifyHashtags, linkifyMentions, processContent, blurb, extractFirstImage } from '../../assets/src/feedRules.js'
+import { sanitizeContent, stripHtml, linkifyHashtags, linkifyMentions, processContent, blurb, extractFirstImage, authorName, sourceLabel } from '../../assets/src/feedRules.js'
 
 // stripHtml — titles only
 
@@ -357,4 +357,36 @@ test('sanitizeContent: lazy data-src is not mistaken for src', t => {
 test('extractFirstImage: resolves relative src against the post url', t => {
   t.is(extractFirstImage('<p><img src="/images/brine.jpg"></p>', 'https://brine.dev/posts/x'), 'https://brine.dev/images/brine.jpg')
   t.is(extractFirstImage('<img src="/images/brine.jpg">'), '')
+})
+
+// author line: rss <author> is "email (Name)", and some feeds repeat their title
+
+test('authorName: takes the name out of "email (Name)"', t => {
+  t.is(authorName('hello@manuelmoreale.com (Manuel Moreale)'), 'Manuel Moreale')
+  t.is(authorName('noreply@blogger.com (Daily Medieval)'), 'Daily Medieval')
+})
+
+test('authorName: a bare email is no name at all', t => {
+  t.is(authorName('someone@example.com'), '')
+})
+
+test('authorName: plain names pass through', t => {
+  t.is(authorName('  Will Ellwood '), 'Will Ellwood')
+  t.is(authorName(''), '')
+  t.is(authorName(null), '')
+})
+
+test('sourceLabel: author and feed once each', t => {
+  t.is(sourceLabel('Bret Devereaux', 'A Collection of Unmitigated Pedantry'), 'Bret Devereaux · A Collection of Unmitigated Pedantry')
+})
+
+test('sourceLabel: same name twice shows once, ignoring case', t => {
+  t.is(sourceLabel('FossilHuntress', 'FOSSIL HUNTRESS'), 'FossilHuntress')
+  t.is(sourceLabel('DW Classical Music', 'DW Classical Music'), 'DW Classical Music')
+})
+
+test('sourceLabel: email author never reaches the page', t => {
+  const label = sourceLabel('hello@manuelmoreale.com (Manuel Moreale)', 'Manuel Moreale — Everything Feed')
+  t.is(label, 'Manuel Moreale · Manuel Moreale — Everything Feed')
+  t.falsy(sourceLabel('x@y.com', 'Feed').includes('@'))
 })

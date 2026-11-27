@@ -1,4 +1,5 @@
 // RSS abuse is real! This is about that...
+import { authorName } from '../assets/src/feedRules.js'
 
 export const safeUrl = (url) => {
   if (!url) return ''
@@ -118,7 +119,7 @@ const parseRssItem = (itemXml, feedMeta, isPodcast = false) => {
     url: extractCdata(extractTag(itemXml, 'link')).replace(/<[^>]+>/g, '').trim(),
     date: extractTag(itemXml, 'pubDate') || extractTag(itemXml, 'dc:date') || '',
     content: content + imgTag + audioTag,
-    author: extractCdata(extractTag(itemXml, 'dc:creator') || extractTag(itemXml, 'author')),
+    author: authorName(extractCdata(extractTag(itemXml, 'dc:creator') || extractTag(itemXml, 'author'))),
     tags: extractPostTags(itemXml, content),
     feed: feedMeta
   }
@@ -145,7 +146,7 @@ const parseAtomEntry = (entryXml, feedMeta) => {
     url: extractAttr(entryXml, 'link', 'href') || extractCdata(extractTag(entryXml, 'link')),
     date: extractTag(entryXml, 'published') || extractTag(entryXml, 'updated') || '',
     content: thumbnail + content,
-    author: extractCdata(extractTag(extractTag(entryXml, 'author'), 'name')),
+    author: authorName(extractCdata(extractTag(extractTag(entryXml, 'author'), 'name'))),
     tags: extractPostTags(entryXml, content),
     feed: feedMeta
   }

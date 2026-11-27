@@ -1,4 +1,4 @@
-import { stripHtml, blurb, extractFirstImage } from './feedRules.js'
+import { stripHtml, blurb, extractFirstImage, sourceLabel } from './feedRules.js'
 
 const formatDate = (dateStr) => {
   try {
@@ -33,7 +33,7 @@ export const feedsItemTemplate = (item) => {
   const contentForBlurb = (item.content || '').replace(/<style[\s\S]*?<\/style>/gi, '')
   const text = blurb(contentForBlurb)
 
-  const sourceName = `${item.author ? `${item.author} · ` : ''}${item.feed?.title || domain}`
+  const sourceName = sourceLabel(item.author, item.feed?.title || domain)
   const playlistBadge = item.playlists?.length
     ? item.playlists.map(p => `<a class="feed-playlist-badge" href="/discover/${p.slug || p.id}">${p.title}</a>`).join('')
     : (item.fromPlaylist && item.fromPlaylistId
